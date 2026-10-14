@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#eef0eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Pastime" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Pastime</title>
+    <script>
+      // Set the theme before first paint so there's no light/dark flash.
+      try {
+        var s = JSON.parse(localStorage.getItem('pastime.settings') || '{}');
+        var t = s.theme || 'system';
+        var d = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        var bg = { mist: ['#eef0eb', '#141a17'], dusk: ['#eceef2', '#131722'], clay: ['#f2eee8', '#1a1613'], lilac: ['#efedf2', '#17141d'] };
+        var p = bg[s.palette] ? s.palette : 'mist';
+        document.documentElement.dataset.theme = d ? 'dark' : 'light';
+        document.documentElement.dataset.palette = p;
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', bg[p][d ? 1 : 0]);
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

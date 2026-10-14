@@ -1,0 +1,317 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/figtree';
+@import '@fontsource/instrument-serif';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Themes: <html data-palette="mist|dusk|clay|lilac" data-theme="light|dark">.
+ * Mist light is the default; each palette overrides the core tokens, and dark mode has its own set per palette.
+ * --float is the dark pill used by the timer bar and toasts.
+ */
+:root {
+  --bg: #eef0eb;
+  --surface: #f9faf7;
+  --surface-2: #e4e8e1;
+  --ink: #1f2a25;
+  --muted: #5b6862;
+  --line: #d8ddd5;
+  --accent: #4d7060;
+  --on-accent: #ffffff;
+  --soft: #dce6df;
+  --soft-ink: #2f4a3e;
+  --float: #1f2a25;
+  --float-ink: #eef0eb;
+  --float-2: #33433b;
+  --star: #b8892e;
+
+  /* Sequential (one hue, light → dark) for the activity heatmaps. */
+  --heat-0: #e4e8e1;
+  --heat-1: #cfddd3;
+  --heat-2: #a9c3b3;
+  --heat-3: #7fa08d;
+  --heat-4: #4d7060;
+
+  /* Category colors (a category picks one by name): quiet, mid-tone, readable as text. */
+  --c-violet: #6e5f9a;
+  --c-rose: #a8545f;
+  --c-amber: #94702f;
+  --c-emerald: #4e7a5f;
+  --c-sky: #4d7493;
+  --c-orange: #a2603a;
+  --c-pink: #a05679;
+  --c-teal: #3f7a76;
+  --c-indigo: #5a64a0;
+  --c-lime: #66762f;
+  --c-red: #a64b45;
+  --c-cyan: #3d7787;
+  --c-fuchsia: #8e5590;
+  --c-slate: #637080;
+  color-scheme: light;
+}
+
+:root[data-palette='dusk'] {
+  --bg: #eceef2;
+  --surface: #f8f9fb;
+  --surface-2: #e1e5ec;
+  --ink: #1d2433;
+  --muted: #586174;
+  --line: #d5dae3;
+  --accent: #4f6489;
+  --soft: #dde3ee;
+  --soft-ink: #2e3d5a;
+  --float: #1d2433;
+  --float-ink: #eceef2;
+  --float-2: #2f3a50;
+  --heat-0: #e1e5ec;
+  --heat-1: #cdd6e6;
+  --heat-2: #a6b6d2;
+  --heat-3: #7b90b6;
+  --heat-4: #4f6489;
+}
+
+:root[data-palette='clay'] {
+  --bg: #f2eee8;
+  --surface: #fbf9f6;
+  --surface-2: #e9e3da;
+  --ink: #2b241e;
+  --muted: #6b6057;
+  --line: #dfd7cc;
+  --accent: #9a5b3f;
+  --soft: #efdfd4;
+  --soft-ink: #6a3a25;
+  --float: #2b241e;
+  --float-ink: #f2eee8;
+  --float-2: #40362d;
+  --heat-0: #e9e3da;
+  --heat-1: #ebd3c3;
+  --heat-2: #ddb096;
+  --heat-3: #c0876a;
+  --heat-4: #9a5b3f;
+}
+
+:root[data-palette='lilac'] {
+  --bg: #efedf2;
+  --surface: #faf9fc;
+  --surface-2: #e5e1eb;
+  --ink: #241f2e;
+  --muted: #635c70;
+  --line: #dad5e2;
+  --accent: #6b5a8e;
+  --soft: #e4deee;
+  --soft-ink: #43375c;
+  --float: #241f2e;
+  --float-ink: #efedf2;
+  --float-2: #372f45;
+  --heat-0: #e5e1eb;
+  --heat-1: #d8cfe8;
+  --heat-2: #b9a9d6;
+  --heat-3: #9581bd;
+  --heat-4: #6b5a8e;
+}
+
+:root[data-theme='dark'] {
+  --bg: #141a17;
+  --surface: #1c2420;
+  --surface-2: #25302a;
+  --ink: #e6ece8;
+  --muted: #9aa9a1;
+  --line: #2c3832;
+  --accent: #8fbba3;
+  --on-accent: #12201a;
+  --soft: #24372d;
+  --soft-ink: #b5d6c3;
+  --float: #2a3a32;
+  --float-ink: #e6ece8;
+  --float-2: #36483f;
+  --star: #e2b65a;
+  --heat-0: #25302a;
+  --heat-1: #2e4a3c;
+  --heat-2: #3f6b55;
+  --heat-3: #5e9077;
+  --heat-4: #8fbba3;
+
+  --c-violet: #b7a8de;
+  --c-rose: #e3a3ab;
+  --c-amber: #ddbe85;
+  --c-emerald: #9cc9ac;
+  --c-sky: #9ec1dd;
+  --c-orange: #e5ae8c;
+  --c-pink: #e2a6c3;
+  --c-teal: #92cbc5;
+  --c-indigo: #aab2e3;
+  --c-lime: #bfcd8b;
+  --c-red: #e7a19b;
+  --c-cyan: #94c8d6;
+  --c-fuchsia: #d7a6d9;
+  --c-slate: #afb9c6;
+  color-scheme: dark;
+}
+
+:root[data-theme='dark'][data-palette='dusk'] {
+  --bg: #131722;
+  --surface: #1b2030;
+  --surface-2: #242b3d;
+  --ink: #e5e9f2;
+  --muted: #98a1b5;
+  --line: #2b3346;
+  --accent: #9db1d9;
+  --on-accent: #141a28;
+  --soft: #26324a;
+  --soft-ink: #bfcde8;
+  --float: #273350;
+  --float-ink: #e5e9f2;
+  --float-2: #33405e;
+  --heat-0: #242b3d;
+  --heat-1: #2b3a5a;
+  --heat-2: #3e5480;
+  --heat-3: #6079aa;
+  --heat-4: #9db1d9;
+}
+
+:root[data-theme='dark'][data-palette='clay'] {
+  --bg: #1a1613;
+  --surface: #231e1a;
+  --surface-2: #2d2621;
+  --ink: #f0e9e2;
+  --muted: #ad9f92;
+  --line: #362e28;
+  --accent: #e0a283;
+  --on-accent: #2a1810;
+  --soft: #3b2a21;
+  --soft-ink: #ebc2ac;
+  --float: #3a2e26;
+  --float-ink: #f0e9e2;
+  --float-2: #4a3b31;
+  --heat-0: #2d2621;
+  --heat-1: #4a3226;
+  --heat-2: #6e4532;
+  --heat-3: #a2664a;
+  --heat-4: #e0a283;
+}
+
+:root[data-theme='dark'][data-palette='lilac'] {
+  --bg: #17141d;
+  --surface: #201c28;
+  --surface-2: #2a2533;
+  --ink: #ece8f2;
+  --muted: #a49db3;
+  --line: #332d3e;
+  --accent: #bca9e3;
+  --on-accent: #1e1630;
+  --soft: #322a44;
+  --soft-ink: #d6caf0;
+  --float: #332b45;
+  --float-ink: #ece8f2;
+  --float-2: #41375a;
+  --heat-0: #2a2533;
+  --heat-1: #352c4d;
+  --heat-2: #4f4174;
+  --heat-3: #7b67a8;
+  --heat-4: #bca9e3;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-star: var(--star);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-soft: var(--soft);
+  --color-soft-ink: var(--soft-ink);
+  --color-float: var(--float);
+  --color-float-ink: var(--float-ink);
+  --color-float-2: var(--float-2);
+  --font-sans: 'Figtree Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  transition: background-color 0.25s ease;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Page titles and other big quiet headings. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+}
+
+/* Small uppercase section labels. */
+.eyebrow {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px; /* stops iOS zooming into focused fields */
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.field {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 0.65rem 0.9rem;
+  color: var(--ink);
+  outline: none;
+}
+.field:focus {
+  border-color: var(--accent);
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.animate-sheet {
+  animation: sheet-in 0.22s ease-out;
+}
+.animate-fade {
+  animation: fade-in 0.18s ease-out;
+}
