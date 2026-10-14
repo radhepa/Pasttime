@@ -33,7 +33,8 @@ Track everything you watch, read, play, listen to, and go to, with a day-by-day 
 - **Timer:** start it when you begin reading or playing; it keeps running if you close the app. Stopping it fills in the minutes.
 - **Your notes:** write your thoughts on any title. You can edit or delete any entry, with undo.
 - **Bring your history:** import CSV exports from Goodreads and Letterboxd. "Fill in missing covers" looks up artwork for imported titles.
-- **Works offline:** your data lives on your device, and cover art is cached. Search falls back to your own library when you're offline.
+- **Syncs between phone and computer:** sign in under Settings → Sync and every device shares one private library. Changes show up live.
+- **Works offline:** your data lives on your device first, and cover art is cached. Search falls back to your own library when you're offline.
 - **Light or dark:** match your device, or pick one.
 - **Installs on iPhone and desktop:** in Safari, use "Add to Home Screen"; in Chrome or Edge, click Install.
 
@@ -46,4 +47,4 @@ npm run dev
 
 `npm run build` creates the installable app in `dist/`. Deploy it to any static host, such as Vercel or GitHub Pages.
 
-Your data is stored on the device (IndexedDB). To move it between devices, use Settings → Export / Restore backup.
+Your data is stored on the device (IndexedDB) and, once you sign in, mirrored to a private Supabase table (`pastime_rows`) that only your account can read (row-level security). `src/lib/sync.ts` has the details; `npm test` runs a two-device sync simulation. Settings → Export / Restore backup still works as a manual backup.

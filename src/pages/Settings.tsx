@@ -9,6 +9,7 @@ import { fillMissingDetails, importCsv, importLetterboxdWatchlist } from '../lib
 import { toast } from '../lib/toast';
 import { Button, Field, Icon } from '../components/ui';
 import { CategoryEditor } from '../components/CategoryEditor';
+import { SyncCard } from '../components/SyncCard';
 
 function Card({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
   return (
@@ -218,6 +219,10 @@ export default function Settings() {
     <div>
       <h1 className="mb-6 display text-[2.75rem]">Settings</h1>
 
+      <Card title="Sync" id="sync">
+        <SyncCard />
+      </Card>
+
       <Card title="Appearance" id="appearance">
         <Segmented
           value={s.theme}
@@ -292,8 +297,8 @@ export default function Settings() {
 
       <Card title="Search databases">
         <p className="text-sm text-muted">
-          Every category searches free databases with no setup. Free keys from TMDB or RAWG give richer movie and game results, and they're stored only
-          on this device.
+          Every category searches free databases with no setup. Free keys from TMDB or RAWG give richer movie and game results. They're kept on this device
+          (and in your private account if you sync).
         </p>
         <Field label="TMDB API key (movies)" hint="Free at themoviedb.org → Settings → API">
           <input className="field font-mono" value={s.tmdbKey} onChange={(e) => setSettings({ tmdbKey: e.target.value.trim() })} placeholder="Optional" />
@@ -305,7 +310,7 @@ export default function Settings() {
 
       <Card title="Your data">
         <p className="text-sm text-muted">
-          {counts ? `${counts.media} titles and ${counts.logs} timeline entries` : '…'} are saved on this device and work fully offline.
+          {counts ? `${counts.media} titles and ${counts.logs} timeline entries` : '…'} are saved on this device and work fully offline (and in your account, if you sign in above).
           {persisted === true && ' Your browser has agreed to keep them safe.'}
         </p>
         {(daysSinceBackup === undefined || daysSinceBackup >= 14) && (counts?.logs ?? 0) > 0 && (

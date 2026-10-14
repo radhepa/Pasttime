@@ -45,6 +45,13 @@ const DEFAULTS: Settings = {
 
 let current: Settings = load();
 const listeners = new Set<() => void>();
+/** Changes made on this device (not ones that arrived from another device), for sync. */
+const localListeners = new Set<() => void>();
+
+export function onLocalSettingsChange(cb: () => void) {
+  localListeners.add(cb);
+  return () => localListeners.delete(cb);
+}
 
 function load(): Settings {
   try {
@@ -61,7 +68,8 @@ export function getSettings() {
   return current;
 }
 
-export function setSettings(patch: Partial<Settings>) {
+/** `fromSync`: the change came from another device, so don't send it back. */
+export function setSettings(patch: Partial<Settings>, fromSync = false) {
   current = { ...current, ...patch };
   try {
     localStorage.setItem(KEY, JSON.stringify(current));
@@ -70,6 +78,7 @@ export function setSettings(patch: Partial<Settings>) {
   }
   if (patch.theme || patch.palette) applyTheme();
   listeners.forEach((l) => l());
+  if (!fromSync) localListeners.forEach((l) => l());
 }
 
 /** Resolves "system" against the OS setting and tags <html data-theme data-palette>. Also mirrored by the inline script in index.html. */
