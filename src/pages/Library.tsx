@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
-import { createList, db } from '../db';
+import { createList, db, newestFirst } from '../db';
 import type { Episode, LogEntry, Media, Status } from '../types';
 import { getCategory, statusLabel, useCategories } from '../lib/categories';
 import { statsFor } from '../lib/stats';
@@ -183,7 +183,7 @@ export default function Library() {
 
 function Lists() {
   const lists = useLiveQuery(async () => {
-    const all = await db.lists.orderBy('updatedAt').reverse().toArray();
+    const all = newestFirst(await db.lists.toArray());
     const covers = await db.media.bulkGet([...new Set(all.flatMap((l) => l.items.slice(0, 4)))]);
     const byId = new Map(covers.filter(Boolean).map((m) => [m!.id, m!]));
     return all.map((l) => ({ l, preview: l.items.slice(0, 4).map((id) => byId.get(id)).filter(Boolean) as Media[] }));

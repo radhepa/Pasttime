@@ -260,7 +260,7 @@ async function pull(firstMerge: boolean) {
   if (firstMerge) {
     // Everything only this device has (or has newer) goes up.
     for (const t of TABLES) {
-      const keys = (await db.table(t).toCollection().primaryKeys()) as string[];
+      const keys = ((await db.table(t).toArray()) as { id: string }[]).map((r) => r.id);
       for (const id of keys) if (!seen.has(keyOf(t, id))) mark(t, id, 'put');
     }
     keptLocal.forEach((k) => {

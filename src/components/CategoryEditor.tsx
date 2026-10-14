@@ -88,15 +88,15 @@ export function CategoryEditor({ category, open, onClose }: { category?: Categor
     await db.transaction('rw', [db.categories, db.media, db.logs, db.episodes, db.lists], async () => {
       const items = await db.media.where('type').equals(category.id).toArray();
       if (moveTo) {
-        await db.media.where('type').equals(category.id).modify({ type: moveTo });
+        await db.media.bulkPut(items.map((m) => ({ ...m, type: moveTo })));
       } else {
         const ids = items.map((m) => m.id);
-        await db.logs.where('mediaId').anyOf(ids).delete();
-        await db.episodes.where('mediaId').anyOf(ids).delete();
+        const gone = new Set(ids);
+        await db.logs.bulkDelete((await db.logs.toArray()).filter((l) => gone.has(l.mediaId)).map((l) => l.id));
+        await db.episodes.bulkDelete((await db.episodes.toArray()).filter((e) => gone.has(e.mediaId)).map((e) => e.id));
         await db.media.bulkDelete(ids);
-        await db.lists.toCollection().modify((l) => {
-          l.items = l.items.filter((x) => !ids.includes(x));
-        });
+        const lists = (await db.lists.toArray()).filter((l) => l.items.some((x) => gone.has(x)));
+        await db.lists.bulkPut(lists.map((l) => ({ ...l, items: l.items.filter((x) => !gone.has(x)) })));
       }
       await db.categories.delete(category.id);
     });

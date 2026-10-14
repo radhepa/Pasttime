@@ -19,7 +19,7 @@ interface DayGroup {
 /** Everything logged on the given days, grouped per day and per title. */
 function useDays(dates: string[]) {
   return useLiveQuery(async () => {
-    const logs = await db.logs.where('date').anyOf(dates).toArray();
+    const logs = (await Promise.all(dates.map((d) => db.logs.where('date').equals(d).toArray()))).flat();
     const media = new Map((await db.media.bulkGet([...new Set(logs.map((l) => l.mediaId))])).filter(Boolean).map((m) => [m!.id, m!]));
     const epIds = logs.map((l) => l.episodeId).filter(Boolean) as string[];
     const episodes = new Map((await db.episodes.bulkGet(epIds)).filter(Boolean).map((e) => [e!.id, e!]));
@@ -239,7 +239,7 @@ function ContinueRow() {
 function useActivityCounts() {
   return useLiveQuery(async () => {
     const counts = new Map<string, number>();
-    await db.logs.where('date').above('').each((l) => counts.set(l.date!, (counts.get(l.date!) ?? 0) + 1));
+    for (const l of await db.logs.toArray()) if (l.date) counts.set(l.date, (counts.get(l.date) ?? 0) + 1);
     return counts;
   }, []);
 }
@@ -331,7 +331,7 @@ export default function Timeline() {
   const [editing, setEditing] = useState<{ log: LogEntry; media: Media }>();
 
   const recentDays = useLiveQuery(async () => {
-    const keys = (await db.logs.orderBy('date').reverse().uniqueKeys()) as string[];
+    const keys = [...new Set((await db.logs.toArray()).map((l) => l.date).filter((d): d is string => !!d))].sort().reverse();
     return keys.filter((k) => k && k <= todayKey()).slice(0, 20);
   }, []);
   const recent = useDays(recentDays?.filter((d) => d !== day) ?? []);

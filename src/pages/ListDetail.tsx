@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { db, toggleInList } from '../db';
+import { db, newestFirst, toggleInList } from '../db';
 import type { Media, MediaList } from '../types';
 import { toast } from '../lib/toast';
 import { Button, Cover, Empty, Icon, Sheet, TypeBadge } from '../components/ui';
@@ -148,7 +148,7 @@ export default function ListDetail() {
 
 function AddFromLibrary({ list, open, onClose }: { list: MediaList; open: boolean; onClose: () => void }) {
   const [q, setQ] = useState('');
-  const all = useLiveQuery(() => db.media.orderBy('updatedAt').reverse().toArray(), []);
+  const all = useLiveQuery(() => db.media.toArray().then(newestFirst), []);
   const needle = q.trim().toLowerCase();
   const shown = (all ?? []).filter((m) => !needle || m.title.toLowerCase().includes(needle)).slice(0, 60);
   return (

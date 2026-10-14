@@ -51,7 +51,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const [showOverview, setShowOverview] = useState(false);
   const [params, setParams] = useSearchParams();
   const timer = useTimer();
-  const inLists = useLiveQuery(() => db.lists.filter((l) => l.items.includes(media.id)).toArray(), [media.id]);
+  const inLists = useLiveQuery(() => db.lists.toArray().then((all) => all.filter((l) => l.items.includes(media.id))), [media.id]);
 
   // Arriving from "Stop & log" on the timer: open the right sheet with the minutes filled in.
   useEffect(() => {

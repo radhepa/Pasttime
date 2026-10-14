@@ -39,6 +39,14 @@ export const db = new PastimeDB();
 
 export const uid = () => crypto.randomUUID();
 
+/*
+ * Safari on iPhone has IndexedDB bugs with cursors ("UnknownError: Unable to open cursor", worst on an
+ * empty database), so app code sticks to plain reads: get / bulkGet / where(…).equals(…).toArray() /
+ * toArray() / count(), then sorts and filters in JavaScript. Avoid anyOf, each, modify, filter,
+ * reverse, uniqueKeys, offset/limit and Collection.delete here.
+ */
+export const newestFirst = <T extends { updatedAt: number }>(rows: T[]) => rows.sort((a, b) => b.updatedAt - a.updatedAt);
+
 export async function findBySource(source: string, sourceId: string) {
   return db.media.where('[source+sourceId]').equals([source, sourceId]).first();
 }
@@ -109,11 +117,10 @@ export async function syncEpisodes(media: Media) {
 
 export async function deleteMedia(id: string) {
   await db.transaction('rw', [db.media, db.episodes, db.logs, db.lists], async () => {
-    await db.lists.toCollection().modify((l) => {
-      l.items = l.items.filter((x) => x !== id);
-    });
-    await db.logs.where('mediaId').equals(id).delete();
-    await db.episodes.where('mediaId').equals(id).delete();
+    const lists = (await db.lists.toArray()).filter((l) => l.items.includes(id));
+    await db.lists.bulkPut(lists.map((l) => ({ ...l, items: l.items.filter((x) => x !== id) })));
+    await db.logs.bulkDelete((await db.logs.where('mediaId').equals(id).toArray()).map((l) => l.id));
+    await db.episodes.bulkDelete((await db.episodes.where('mediaId').equals(id).toArray()).map((e) => e.id));
     await db.media.delete(id);
   });
 }

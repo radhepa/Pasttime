@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
-import { createList, db, toggleInList } from '../db';
+import { createList, db, newestFirst, toggleInList } from '../db';
 import type { Media } from '../types';
 import { Button, Icon, Sheet } from './ui';
 
@@ -8,7 +8,7 @@ export const LIST_EMOJI = ['📌', '❤️', '🍿', '📚', '🎮', '🛋️', 
 
 /** Tick which of your lists this title belongs to, or make a new one. */
 export function ListsSheet({ media, open, onClose }: { media: Media; open: boolean; onClose: () => void }) {
-  const lists = useLiveQuery(() => db.lists.orderBy('updatedAt').reverse().toArray(), []);
+  const lists = useLiveQuery(() => db.lists.toArray().then(newestFirst), []);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState(LIST_EMOJI[0]);
 

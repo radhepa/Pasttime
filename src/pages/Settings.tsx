@@ -98,7 +98,7 @@ function Categories() {
   const { all } = useCategories();
   const counts = useLiveQuery(async () => {
     const m = new Map<string, number>();
-    await db.media.each((x) => m.set(x.type, (m.get(x.type) ?? 0) + 1));
+    for (const x of await db.media.toArray()) m.set(x.type, (m.get(x.type) ?? 0) + 1);
     return m;
   }, []);
   const [editing, setEditing] = useState<Category | 'new'>();
