@@ -24,6 +24,69 @@
         document.querySelector('meta[name="theme-color"]').setAttribute('content', bg[p][d ? 1 : 0]);
       } catch (e) {}
     </script>
+    <script>
+      // Start-up safety net (plain old JS, so it runs even where the app's code can't): if the app
+      // hasn't drawn anything after a few seconds, or it crashes, show what went wrong instead of an
+      // empty page, offer a repair, and send a short crash report (error text + browser, no data).
+      (function () {
+        var errors = [];
+        var reported = false;
+        function note(msg) {
+          if (msg && errors.length < 8) errors.push(String(msg).slice(0, 500));
+        }
+        window.addEventListener('error', function (e) {
+          note((e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno + ':' + e.colno : ''));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          note('Unhandled: ' + ((r && (r.name ? r.name + ': ' : '') + r.message) || r));
+        });
+        function report(message) {
+          if (reported) return;
+          reported = true;
+          try {
+            fetch('https://jvescwzjijbjcfuxdqxo.supabase.co/rest/v1/pastime_client_errors', {
+              method: 'POST',
+              headers: { apikey: 'sb_publishable_0m38u1OjuLxTmF9O_gVNng_SDx2Y2eJ', 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+              body: JSON.stringify({
+                message: String(message).slice(0, 4000),
+                user_agent: navigator.userAgent.slice(0, 500),
+                url: location.href.slice(0, 300),
+                build: (document.querySelector('script[type=module][src]') || {}).src || 'dev',
+              }),
+            }).catch(function () {});
+          } catch (e) {}
+        }
+        // Clears the cached copy of the app (not your library) and loads it fresh.
+        window.__pastimeRepair = function () {
+          var jobs = [];
+          try {
+            if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+            if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+          } catch (e) {}
+          Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname); });
+        };
+        window.__pastimeCrash = function (message) {
+          note(message);
+          report(errors.join('\n'));
+        };
+        function showFallback() {
+          var root = document.getElementById('root');
+          if (!root || root.childElementCount) return;
+          var details = errors.length ? errors.join('\n') : 'The app did not start (no error was reported).';
+          report('Blank start\n' + details);
+          root.innerHTML =
+            '<div style="max-width:28rem;margin:0 auto;padding:calc(env(safe-area-inset-top) + 3rem) 1.25rem 2rem;font:16px/1.5 system-ui,sans-serif;color:var(--ink,#1f2a25)">' +
+            '<h1 style="font:400 2.4rem/1.1 Georgia,serif;margin:0 0 .75rem">Pastime didn’t start</h1>' +
+            '<p style="margin:0 0 1.25rem;opacity:.75">Your library is safe on this device. Repair clears the saved copy of the app and loads a fresh one.</p>' +
+            '<button onclick="__pastimeRepair()" style="font:600 15px system-ui;padding:.75rem 1.2rem;border:0;border-radius:1rem;background:var(--accent,#4d7060);color:var(--on-accent,#fff);margin-right:.5rem">Repair &amp; reload</button>' +
+            '<button onclick="location.reload()" style="font:600 15px system-ui;padding:.75rem 1.2rem;border:0;border-radius:1rem;background:var(--surface-2,#e4e8e1);color:inherit">Reload</button>' +
+            '<pre style="margin-top:1.5rem;white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace;opacity:.7"></pre></div>';
+          root.querySelector('pre').textContent = details + '\n\n' + navigator.userAgent;
+        }
+        setTimeout(showFallback, 6000);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

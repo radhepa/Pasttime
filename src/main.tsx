@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { CrashScreen } from './components/CrashScreen';
 import { applyTheme } from './lib/settings';
 import './lib/sync';
 import './index.css';
@@ -15,8 +16,10 @@ navigator.storage?.persist?.().catch(() => undefined);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    <CrashScreen>
+      <HashRouter>
+        <App />
+      </HashRouter>
+    </CrashScreen>
   </StrictMode>,
 );
