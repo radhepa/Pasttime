@@ -8,7 +8,18 @@ import { applyTheme } from './lib/settings';
 import './lib/sync';
 import './index.css';
 
-registerSW({ immediate: true });
+// Updates: iPhone home-screen apps are often resumed rather than reloaded, which skips the browser's own
+// update check. So also look for a new version whenever the app comes back into view, and every 30 minutes.
+// A new version installs and reloads the page by itself (autoUpdate).
+registerSW({
+  immediate: true,
+  onRegisteredSW(_url, registration) {
+    if (!registration) return;
+    const check = () => navigator.onLine && registration.update().catch(() => undefined);
+    setInterval(check, 30 * 60_000);
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check());
+  },
+});
 applyTheme();
 
 // Your library lives on this device, so ask the browser not to clear it when space runs low.
