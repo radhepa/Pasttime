@@ -154,10 +154,32 @@ function Categories() {
         <Button onClick={() => setEditing('new')}>
           <Icon name="plus" className="size-4" /> New category
         </Button>
-        <Button variant="soft" onClick={() => all.forEach((c) => c.builtIn && !counts?.get(c.id) && saveCategory({ id: c.id, hidden: true }))}>
+        <Button
+          variant="soft"
+          onClick={() => {
+            const hide = all.filter((c) => c.builtIn && !c.hidden && !counts?.get(c.id));
+            if (!hide.length) return toast('Every category is in use');
+            hide.forEach((c) => saveCategory({ id: c.id, hidden: true }));
+            toast(`Hid ${hide.length} unused ${hide.length === 1 ? 'category' : 'categories'}`, {
+              label: 'Undo',
+              run: () => hide.forEach((c) => saveCategory({ id: c.id, hidden: false })),
+            });
+          }}
+        >
           Hide unused
         </Button>
-        <Button variant="soft" onClick={() => all.forEach((c) => c.hidden && saveCategory({ id: c.id, hidden: false, ...(c.builtIn ? {} : { custom: true }) }))}>
+        <Button
+          variant="soft"
+          onClick={() => {
+            const show = all.filter((c) => c.hidden);
+            if (!show.length) return toast('Nothing is hidden');
+            show.forEach((c) => saveCategory({ id: c.id, hidden: false, ...(c.builtIn ? {} : { custom: true }) }));
+            toast(`Showing ${show.length} more ${show.length === 1 ? 'category' : 'categories'}`, {
+              label: 'Undo',
+              run: () => show.forEach((c) => saveCategory({ id: c.id, hidden: true })),
+            });
+          }}
+        >
           Show all
         </Button>
       </div>
@@ -192,13 +214,25 @@ export default function Settings() {
   };
 
   const doImportBackup = async (f: File) => {
+    let data: { app?: string; media?: unknown[]; logs?: unknown[] };
     try {
-      const data = JSON.parse(await f.text());
-      if (data.app !== 'pastime') throw new Error('not a Pastime backup');
-      await importAll(data);
-      setMsg(`Restored ${data.media?.length ?? 0} titles and ${data.logs?.length ?? 0} entries.`);
+      data = JSON.parse(await f.text());
+    } catch {
+      setMsg(`“${f.name}” isn't a Pastime backup (it couldn't be read as one).`);
+      return;
+    }
+    if (data?.app !== 'pastime') {
+      setMsg(`“${f.name}” isn't a Pastime backup. Use a file made with Export backup.`);
+      return;
+    }
+    setMsg('Restoring…');
+    try {
+      await importAll(data as Parameters<typeof importAll>[0]);
+      setMsg(
+        `Added ${data.media?.length ?? 0} titles and ${data.logs?.length ?? 0} entries from the backup. Anything already here was kept; matching items were updated.`,
+      );
     } catch (e) {
-      setMsg(`Couldn't import: ${(e as Error).message}`);
+      setMsg(`Something went wrong while restoring: ${(e as Error).message}. Nothing was removed.`);
     }
   };
 

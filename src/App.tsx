@@ -40,9 +40,30 @@ export default function App() {
   const main = useRef<HTMLElement>(null);
   const timer = useTimer();
   useCategories(); // re-render everything when you rename/recolour/hide a category
+  // New screens open at the top; going Back returns to where you were scrolled.
+  const navType = useNavigationType();
+  const scrollKey = pathname + location.search;
+  const scrolls = useRef(new Map<string, number>());
+  const currentKey = useRef(scrollKey);
+  currentKey.current = scrollKey;
   useEffect(() => {
-    main.current?.scrollTo(0, 0);
-  }, [pathname]);
+    const el = main.current;
+    if (!el) return;
+    const saved = navType === 'POP' ? scrolls.current.get(scrollKey) : undefined;
+    if (!saved) {
+      el.scrollTo(0, 0);
+      return;
+    }
+    // The list fills in from the database a moment later, so keep trying until it's tall enough.
+    let tries = 0;
+    let frame = 0;
+    const restore = () => {
+      el.scrollTop = saved;
+      if (Math.abs(el.scrollTop - saved) > 2 && tries++ < 40) frame = requestAnimationFrame(restore);
+    };
+    restore();
+    return () => cancelAnimationFrame(frame);
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Desktop: press "/" anywhere to jump to search.
   useEffect(() => {
@@ -89,7 +110,7 @@ export default function App() {
         </p>
       </nav>
 
-      <main ref={main} className={`pt-safe min-w-0 flex-1 overflow-y-auto ${timer ? 'pb-44 md:pb-28' : 'pb-24 md:pb-8'}`}>
+      <main ref={main} onScroll={(e) => scrolls.current.set(currentKey.current, e.currentTarget.scrollTop)} className={`pt-safe min-w-0 flex-1 overflow-y-auto ${timer ? 'pb-44 md:pb-28' : 'pb-24 md:pb-8'}`}>
         <div className="mx-auto max-w-3xl px-4 py-4 md:px-8 md:py-8">
           <motion.div key={pathname} initial={pageMotion.initial} animate={pageMotion.animate} transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}>
           <Routes location={location}>
@@ -109,6 +130,9 @@ export default function App() {
 
       <TimerBar />
       <Toaster />
+
+      {/* Home-screen app on iPhone: keep scrolling content from showing through under the status bar. */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[env(safe-area-inset-top)] bg-bg/85 backdrop-blur-xl" />
 
       {/* Phone tab bar */}
       <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/90 backdrop-blur-xl md:hidden">

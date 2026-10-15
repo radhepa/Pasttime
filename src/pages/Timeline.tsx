@@ -319,7 +319,14 @@ function streak(counts: Map<string, number>) {
 const heat = (n: number) => (n === 0 ? 'var(--heat-0)' : n === 1 ? 'var(--heat-1)' : n <= 3 ? 'var(--heat-2)' : n <= 6 ? 'var(--heat-3)' : 'var(--heat-4)');
 
 function MonthGrid({ day, counts, onPick }: { day: string; counts: Map<string, number>; onPick: (d: string) => void }) {
-  const d = parseKey(day);
+  // Flipping months only changes what's shown; the selected day changes when you tap one.
+  const [shown, setShown] = useState(() => dateKey(new Date(parseKey(day).getFullYear(), parseKey(day).getMonth(), 1)));
+  const [prevDay, setPrevDay] = useState(day);
+  if (day !== prevDay) {
+    setPrevDay(day);
+    setShown(dateKey(new Date(parseKey(day).getFullYear(), parseKey(day).getMonth(), 1)));
+  }
+  const d = parseKey(shown);
   const first = new Date(d.getFullYear(), d.getMonth(), 1);
   const start = addDays(dateKey(first), -first.getDay());
   const days = Array.from({ length: 42 }, (_, i) => addDays(start, i));
@@ -327,11 +334,11 @@ function MonthGrid({ day, counts, onPick }: { day: string; counts: Map<string, n
   return (
     <div className="mb-5 rounded-3xl bg-surface p-3">
       <div className="mx-auto mb-2 flex max-w-sm items-center justify-between">
-        <button onClick={() => onPick(dateKey(new Date(d.getFullYear(), d.getMonth() - 1, 1)))} className="p-1.5 text-muted" aria-label="Previous month">
+        <button onClick={() => setShown(dateKey(new Date(d.getFullYear(), d.getMonth() - 1, 1)))} className="rounded-full p-2.5 text-muted active:bg-surface-2" aria-label="Previous month">
           <Icon name="left" className="size-4" />
         </button>
         <span className="text-sm font-semibold">{d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</span>
-        <button onClick={() => onPick(dateKey(new Date(d.getFullYear(), d.getMonth() + 1, 1)))} className="p-1.5 text-muted" aria-label="Next month">
+        <button onClick={() => setShown(dateKey(new Date(d.getFullYear(), d.getMonth() + 1, 1)))} className="rounded-full p-2.5 text-muted active:bg-surface-2" aria-label="Next month">
           <Icon name="right" className="size-4" />
         </button>
       </div>

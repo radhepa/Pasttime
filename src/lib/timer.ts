@@ -43,6 +43,8 @@ export function stopTimer() {
 }
 
 export const cancelTimer = () => save(null);
+/** Puts a stopped or cancelled timer back, still counting from when it started. */
+export const restoreTimer = (t: Timer) => save(t);
 export const getTimer = () => current;
 
 export function useTimer() {

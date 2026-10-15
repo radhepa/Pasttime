@@ -173,7 +173,7 @@ export default function Search() {
   return (
     <div>
       <h1 className="mb-4 display text-[2.75rem]">Search</h1>
-      <div className="sticky top-0 z-10 -mx-4 bg-bg/90 px-4 pt-1 pb-3 backdrop-blur-xl">
+      <div className="sticky top-[env(safe-area-inset-top)] z-10 -mx-4 bg-bg/90 px-4 pt-1 pb-3 backdrop-blur-xl">
         <div className="relative">
           <Icon name="search" className="absolute top-1/2 left-3.5 size-5 -translate-y-1/2 text-muted" />
           <input
@@ -278,7 +278,11 @@ export default function Search() {
                   )}
                 </div>
                 {r.loading && <SkeletonRows />}
-                {r.error && <p className="px-2 py-3 text-sm text-red-500">Couldn't reach the {c.name.toLowerCase()} database ({r.error}).</p>}
+                {r.error && (
+                  <p className="px-2 py-3 text-sm text-muted">
+                    Couldn't reach the {c.name.toLowerCase()} database just now. Check your connection, or try again in a moment.
+                  </p>
+                )}
                 {items?.length === 0 && <p className="px-2 py-3 text-sm text-muted">No matches.</p>}
                 {items?.map((it, i) => (
                   <ResultRow
@@ -319,7 +323,7 @@ export default function Search() {
           {type !== 'all' && (
             <div className="px-2">
               <Link to={`/new/${type}?title=${encodeURIComponent(query)}`} className="text-sm font-semibold text-accent">
-                + Add “{query}” as a {getCategory(type).name.toLowerCase()} yourself
+                + Add “{query}” as {/^[aeiou]/i.test(getCategory(type).name) ? 'an' : 'a'} {getCategory(type).name.toLowerCase()} yourself
               </Link>
             </div>
           )}

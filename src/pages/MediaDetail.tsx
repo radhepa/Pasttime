@@ -9,12 +9,12 @@ import { fmtRating, showRating } from '../lib/ratings';
 import { currentPage, ratingFor } from '../lib/stats';
 import { getCategory, statusLabel, unitPlural, verb } from '../lib/categories';
 import { useSettings } from '../lib/settings';
-import { SOURCE_LABEL } from '../lib/search';
+import { plainText, SOURCE_LABEL } from '../lib/search';
 import { Bar, Button, catColor, Cover, Icon, StarDisplay, StarInput, TypeBadge } from '../components/ui';
 import { LogEditor } from '../components/LogEditor';
 import { BulkWatchSheet, FinishSheet, OnceSheet, ProgressSheet, RatePrompt, SessionSheet } from '../components/LogSheets';
 import { ListsSheet } from '../components/ListsSheet';
-import { elapsed, startTimer, useTimer } from '../lib/timer';
+import { elapsed, restoreTimer, startTimer, useTimer, type Timer } from '../lib/timer';
 import { toast } from '../lib/toast';
 import { celebrate, haptic } from '../lib/feedback';
 
@@ -50,6 +50,9 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const [editing, setEditing] = useState<LogEntry>();
   const [sheet, setSheet] = useState<'once' | 'progress' | 'session' | 'finish' | 'lists'>();
   const [timerMinutes, setTimerMinutes] = useState<number>();
+  /** The timer that "Stop & log" just ended, so closing the sheet without saving can bring it back. */
+  const [stoppedTimer, setStoppedTimer] = useState<Timer>();
+  const [savedFromTimer, setSavedFromTimer] = useState(false);
   const [showOverview, setShowOverview] = useState(false);
   const [params, setParams] = useSearchParams();
   const timer = useTimer();
@@ -60,6 +63,9 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
     const kind = params.get('log');
     if (kind === 'progress' || kind === 'session') {
       setTimerMinutes(Number(params.get('minutes')) || undefined);
+      const started = Number(params.get('started'));
+      setStoppedTimer(started ? { mediaId: media.id, title: media.title, kind, type: media.type, startedAt: started } : undefined);
+      setSavedFromTimer(false);
       setSheet(kind);
       setParams({}, { replace: true });
     }
@@ -68,6 +74,11 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const closeSheet = () => {
     setSheet(undefined);
     setTimerMinutes(undefined);
+    if (stoppedTimer && !savedFromTimer && !timer) {
+      const t = stoppedTimer;
+      toast(`${elapsed(t.startedAt)} not logged`, { label: 'Resume timer', run: () => restoreTimer(t) });
+    }
+    setStoppedTimer(undefined);
   };
   const timing = timer?.mediaId === media.id;
   const canTime = cat.track === 'progress' || cat.track === 'sessions';
@@ -104,12 +115,12 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
         <Cover src={media.cover} title={media.title} type={media.type} className="h-44 w-[118px] shrink-0 rounded-xl shadow-lg ring-1 ring-line sm:h-60 sm:w-40" />
         <div className="min-w-0 flex-1 py-1">
           <TypeBadge type={media.type} />
-          <h1 className="display mt-1.5 text-[2.1rem] sm:text-[2.6rem]">{media.title}</h1>
+          <h1 className="display mt-1.5 text-[2.1rem] [overflow-wrap:anywhere] sm:text-[2.6rem]">{media.title}</h1>
           <p className="mt-1 text-sm text-muted">
             {[
               media.year,
               media.creators?.join(', '),
-              media.airStatus === 'Running' || media.airStatus === 'RELEASING' ? 'Still airing' : undefined,
+              media.airStatus === 'Running' || media.airStatus === 'RELEASING' ? (cat.track === 'episodes' ? 'Still airing' : 'Ongoing') : undefined,
               media.totalPages && `${media.totalPages} ${unitPlural(cat, media.totalPages)}`,
               media.runtime && formatMinutes(media.runtime),
               media.platforms?.slice(0, 3).join(', '),
@@ -120,7 +131,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
           <select
             value={media.status}
             onChange={(e) => touchMedia(media.id, { status: e.target.value as Status })}
-            className="mt-3 rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm! font-semibold outline-none"
+            className="select mt-3 rounded-xl border-0 bg-surface-2 py-1.5 pl-3 text-sm! font-semibold outline-none"
           >
             {STATUSES.map((s) => (
               <option key={s} value={s}>
@@ -148,7 +159,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
 
       {media.overview && (
         <button onClick={() => setShowOverview(!showOverview)} className="mt-4 block text-left text-sm leading-relaxed text-muted">
-          <span className={showOverview ? 'whitespace-pre-line' : 'line-clamp-3'}>{media.overview}</span>
+          <span className={showOverview ? 'whitespace-pre-line' : 'line-clamp-3'}>{plainText(media.overview)}</span>
         </button>
       )}
 
@@ -246,10 +257,11 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
         open={sheet === 'progress'}
         currentPage={page}
         initialMinutes={timerMinutes}
+        onSaved={() => setSavedFromTimer(true)}
         onClose={closeSheet}
         onReachedEnd={() => setSheet('finish')}
       />
-      <SessionSheet media={media} open={sheet === 'session'} initialMinutes={timerMinutes} onClose={closeSheet} />
+      <SessionSheet media={media} open={sheet === 'session'} initialMinutes={timerMinutes} onSaved={() => setSavedFromTimer(true)} onClose={closeSheet} />
       <ListsSheet media={media} open={sheet === 'lists'} onClose={closeSheet} />
       <FinishSheet media={media} open={sheet === 'finish'} onClose={closeSheet} />
       <LogEditor log={editing} media={media} onClose={() => setEditing(undefined)} />
@@ -521,20 +533,25 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                     const isSeen = watched.has(e.id);
                     const isAired = aired(e);
                     return (
-                      <div key={e.id} className={`flex items-center gap-3 border-t border-line/60 px-3 py-2 ${isAired ? '' : 'opacity-50'}`}>
+                      <div key={e.id} className={`flex items-center gap-2 border-t border-line/60 py-1 pr-2 pl-1 ${isAired ? '' : 'opacity-50'}`}>
+                        {/* The tap target is 44px; the circle inside stays small. */}
                         <button
                           disabled={!isAired}
                           onClick={() => (isSeen ? unmark(e) : markWatched(e))}
-                          aria-label={isSeen ? 'Mark unwatched' : 'Mark watched'}
-                          className={`flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-200 active:scale-90 ${
-                            isSeen ? 'border-accent bg-accent text-on-accent' : 'border-line hover:border-accent'
-                          } ${isSeen && fresh.has(e.id) ? 'animate-ring' : ''}`}
+                          aria-label={isSeen ? `Mark ${episodeCode(e.season, e.number)} unwatched` : `Mark ${episodeCode(e.season, e.number)} watched`}
+                          className="group flex size-11 shrink-0 items-center justify-center"
                         >
-                          {isSeen && (
-                            <span className={fresh.has(e.id) ? 'animate-pop' : undefined}>
-                              <Icon name="check" className="size-4" strokeWidth={3} draw={fresh.has(e.id)} />
-                            </span>
-                          )}
+                          <span
+                            className={`flex size-7 items-center justify-center rounded-full border-2 transition duration-200 group-active:scale-90 ${
+                              isSeen ? 'border-accent bg-accent text-on-accent' : 'border-line group-hover:border-accent'
+                            } ${isSeen && fresh.has(e.id) ? 'animate-ring' : ''}`}
+                          >
+                            {isSeen && (
+                              <span className={fresh.has(e.id) ? 'animate-pop' : undefined}>
+                                <Icon name="check" className="size-4" strokeWidth={3} draw={fresh.has(e.id)} />
+                              </span>
+                            )}
+                          </span>
                         </button>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">
@@ -546,9 +563,7 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                             {e.runtime ? ` · ${e.runtime}m` : ''}
                           </p>
                         </div>
-                        {isAired && (
-                          <StarInput value={ratings.byEpisode.get(e.id)} onChange={(r) => rateViaLogs(media, r, e)} size="size-4.5" />
-                        )}
+                        {isSeen && <StarInput value={ratings.byEpisode.get(e.id)} onChange={(r) => rateViaLogs(media, r, e)} size="size-5" compact />}
                         {!isSeen && isAired && next && e.id !== next.id && (
                           <button
                             title="Mark everything up to here watched"
@@ -558,9 +573,9 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                                 eps: episodes.filter((x) => aired(x) && (x.season < e.season || (x.season === e.season && x.number <= e.number))),
                               })
                             }
-                            className="hidden text-[11px] font-semibold text-accent sm:block"
+                            className="shrink-0 rounded-full px-2 py-2 text-xs font-semibold text-accent"
                           >
-                            up to here
+                            Up to here
                           </button>
                         )}
                       </div>

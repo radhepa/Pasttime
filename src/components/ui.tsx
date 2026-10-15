@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useDragControls, type PanInfo } from 'motion/react';
 import type { MediaType } from '../types';
@@ -81,13 +81,13 @@ export function StarDisplay({ value, size = 'size-4' }: { value?: number; size?:
 }
 
 /** Tap a star to rate 1–5; tap the current rating again to clear it. */
-export function StarInput({ value, onChange, size = 'size-8' }: { value?: number; onChange: (v: number | undefined) => void; size?: string }) {
+export function StarInput({ value, onChange, size = 'size-8', compact }: { value?: number; onChange: (v: number | undefined) => void; size?: string; compact?: boolean }) {
   const [hover, setHover] = useState<number>();
   // Bumped on every tap so the filled stars replay their little pop, left to right.
   const [bump, setBump] = useState(0);
   const shown = hover ?? value ?? 0;
   return (
-    <span className="inline-flex items-center gap-1" onMouseLeave={() => setHover(undefined)}>
+    <span className={`inline-flex items-center ${compact ? '' : 'gap-1'}`} onMouseLeave={() => setHover(undefined)}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
@@ -102,7 +102,7 @@ export function StarInput({ value, onChange, size = 'size-8' }: { value?: number
             setBump((b) => b + 1);
             onChange(value === n ? undefined : n);
           }}
-          className="transition-transform duration-150 active:scale-85"
+          className={`transition-transform duration-150 active:scale-85 ${compact ? 'p-1' : ''}`}
         >
           <svg
             key={n <= shown ? `on-${bump}` : 'off'}
@@ -129,7 +129,17 @@ export function Cover({ src, title, type, className = '' }: { src?: string; titl
     setBroken(false);
   }, [src]);
   if (src && !broken) {
-    return <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} className={`object-cover bg-surface-2 ${className}`} />;
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        onError={() => setBroken(true)}
+        // Some databases answer "no cover" with a 1x1 or blank placeholder image instead of an error.
+        onLoad={(e) => e.currentTarget.naturalWidth < 16 && setBroken(true)}
+        className={`object-cover bg-surface-2 ${className}`}
+      />
+    );
   }
   const color = catColor(type);
   return (
@@ -172,12 +182,37 @@ const SPRING = { type: 'spring', damping: 34, stiffness: 420, mass: 0.9 } as con
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: ReactNode }) {
   const drag = useDragControls();
   const wide = isWide();
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    // Keyboard: focus moves into the sheet, Tab stays inside it, and focus returns where it was on close.
+    const before = document.activeElement as HTMLElement | null;
+    requestAnimationFrame(() => panel.current?.focus({ preventScroll: true }));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close.current();
+      if (e.key !== 'Tab' || !panel.current) return;
+      const items = [...panel.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+        (el) => !el.hasAttribute('disabled') && el.offsetParent !== null,
+      );
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (before?.isConnected) before.focus({ preventScroll: true });
+    };
+  }, [open]);
   const onDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.y > 110 || info.velocity.y > 650) onClose();
   };
@@ -194,7 +229,9 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
             onClick={onClose}
           />
           <motion.div
-            className="pb-safe relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-surface shadow-2xl sm:max-w-md sm:rounded-3xl"
+            ref={panel}
+            tabIndex={-1}
+            className="pb-safe relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-surface shadow-2xl outline-none sm:max-w-md sm:rounded-3xl"
             initial={wide ? { opacity: 0, scale: 0.94, y: 12 } : { y: '100%' }}
             animate={wide ? { opacity: 1, scale: 1, y: 0 } : { y: 0 }}
             exit={wide ? { opacity: 0, scale: 0.96, y: 8, transition: { duration: 0.16 } } : { y: '100%', transition: { type: 'spring', damping: 40, stiffness: 420 } }}

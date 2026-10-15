@@ -110,10 +110,29 @@ async function searchBooks(q: string, type: string): Promise<SearchResult[]> {
   }));
 }
 
+/**
+ * Descriptions arrive with Markdown from some sources (Open Library: **bold**, [links](…), "----------"
+ * source notes). Show them as plain readable text.
+ */
+export function plainText(s?: string) {
+  if (!s) return s;
+  return s
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // [text](url) -> text
+    .replace(/\[([^\]]+)\]\[\d+\]/g, '$1') // [text][1] -> text
+    .replace(/^\s*\[\d+\]:\s*\S+.*$/gm, '') // [1]: https://... reference lines
+    .replace(/^\s*-{3,}\s*$[\s\S]*/m, '') // "----------" and the source notes after it
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1$2')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, '$1$2')
+    .replace(/^#+\s*/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** Pulls a book's description from Open Library (search results don't include it). */
 export async function fetchBookDescription(workKey: string) {
   const w = await getJson<{ description?: string | { value: string } }>(`https://openlibrary.org${workKey}.json`);
-  return typeof w.description === 'string' ? w.description : w.description?.value;
+  return plainText(typeof w.description === 'string' ? w.description : w.description?.value);
 }
 
 /* ---------------- Wikipedia (movies, games, theater, comics, museums…) ---------------- */

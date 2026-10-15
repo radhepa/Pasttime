@@ -7,6 +7,12 @@ import { Button, Cover, Field, Icon } from '../components/ui';
 
 const STATUSES: Status[] = ['planned', 'active', 'completed', 'paused', 'dropped'];
 
+/** Whole numbers above zero only (no "-50 pages"); `max` keeps years sane. */
+const wholeNumber = (v: string, max = Infinity) => {
+  const n = Math.round(Number(v));
+  return v && n > 0 && n <= max ? n : undefined;
+};
+
 const list = (s: string) =>
   s
     .split(',')
@@ -99,7 +105,9 @@ export default function EditMedia() {
       });
       if (add.length) await db.episodes.bulkAdd(add);
     }
-    navigate(`/m/${media.id}`, { replace: true });
+    // Editing: go back to the title page you came from (so Back afterwards leaves it in one tap).
+    if (!isNew && (window.history.state?.idx ?? 0) > 0) navigate(-1);
+    else navigate(`/m/${media.id}`, { replace: true });
   };
 
   return (
@@ -140,7 +148,7 @@ export default function EditMedia() {
                 inputMode="numeric"
                 className="field"
                 value={m.year ?? ''}
-                onChange={(e) => set({ year: e.target.value ? Number(e.target.value) : undefined })}
+                onChange={(e) => set({ year: wholeNumber(e.target.value, 2200) })}
               />
             </Field>
             <Field label="Status">
@@ -160,7 +168,7 @@ export default function EditMedia() {
                 inputMode="numeric"
                 className="field"
                 value={m.totalPages ?? ''}
-                onChange={(e) => set({ totalPages: e.target.value ? Number(e.target.value) : undefined })}
+                onChange={(e) => set({ totalPages: wholeNumber(e.target.value) })}
               />
             </Field>
           )}
@@ -176,7 +184,7 @@ export default function EditMedia() {
                 inputMode="numeric"
                 className="field"
                 value={m.runtime ?? ''}
-                onChange={(e) => set({ runtime: e.target.value ? Number(e.target.value) : undefined })}
+                onChange={(e) => set({ runtime: wholeNumber(e.target.value) })}
               />
             </Field>
           )}

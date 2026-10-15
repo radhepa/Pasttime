@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { dismiss, useToasts } from '../lib/toast';
-import { cancelTimer, elapsed, stopTimer, useTimer } from '../lib/timer';
+import { cancelTimer, elapsed, restoreTimer, stopTimer, useTimer } from '../lib/timer';
+import { toast } from '../lib/toast';
 import { Icon } from './ui';
 import { getCategory, verb } from '../lib/categories';
 
@@ -68,7 +69,13 @@ export function TimerBar() {
   }, [timer]);
   const stop = () => {
     const done = stopTimer();
-    if (done) navigate(`/m/${done.mediaId}?log=${done.kind}&minutes=${done.minutes}`);
+    if (done) navigate(`/m/${done.mediaId}?log=${done.kind}&minutes=${done.minutes}&started=${done.startedAt}`);
+  };
+  const cancel = () => {
+    if (!timer) return;
+    const t = timer;
+    cancelTimer();
+    toast(`Timer cancelled (${elapsed(t.startedAt)})`, { label: 'Undo', run: () => restoreTimer(t) });
   };
 
   return (
@@ -91,12 +98,12 @@ export function TimerBar() {
           <span className="block text-xs text-float-ink/65">{verb(getCategory(timer.type)).doing}</span>
           <span className="block truncate text-sm font-semibold">{timer.title}</span>
         </button>
-        <span className="font-mono text-lg font-semibold tabular-nums">{elapsed(timer.startedAt)}</span>
-        <button onClick={cancelTimer} className="rounded-full p-2 text-float-ink/65" aria-label="Cancel timer">
+        <span className="shrink-0 font-mono text-base font-semibold tabular-nums min-[400px]:text-lg">{elapsed(timer.startedAt)}</span>
+        <button onClick={cancel} className="rounded-full p-2 text-float-ink/65" aria-label="Cancel timer">
           <Icon name="close" className="size-4" />
         </button>
         <button onClick={stop} className="rounded-2xl bg-float-2 px-3.5 py-2.5 text-sm font-semibold transition active:scale-95">
-          Stop &amp; log
+          Stop<span className="hidden min-[400px]:inline"> &amp; log</span>
         </button>
       </div>
     </motion.div>

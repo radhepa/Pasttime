@@ -126,9 +126,9 @@ function SignInForm({ status }: { status: SyncStatus }) {
           : 'Sign in to keep your phone and computer in sync. Everything stays private to your account, and the app keeps working offline.'}
       </p>
       <Field label="Email">
-        <input className="field" type="email" autoComplete="username" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <input className="field" type="email" autoComplete="username" inputMode="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
       </Field>
-      <Field label="Password" hint="Same account as FitPip.">
+      <Field label="Password" hint="Use the same email and password as your FitPip account.">
         <input className="field" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       </Field>
       {error && <p className="rounded-xl bg-red-500/12 p-3 text-sm text-red-600 dark:text-red-300">{error}</p>}

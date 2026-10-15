@@ -30,7 +30,7 @@ export function ListsSheet({ media, open, onClose }: { media: Media; open: boole
               <span className="text-xl">{l.emoji ?? '📌'}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{l.name}</span>
-                <span className="text-xs text-muted">{l.items.length} titles</span>
+                <span className="text-xs text-muted">{l.items.length} {l.items.length === 1 ? 'title' : 'titles'}</span>
               </span>
               <span className={`flex size-6 items-center justify-center rounded-full border-2 ${on ? 'border-accent bg-accent text-on-accent' : 'border-line text-transparent'}`}>
                 <Icon name="check" className="size-3.5" strokeWidth={3} />

@@ -41,7 +41,14 @@ export default function Library() {
   const status = (params.get('status') ?? 'all') as Status | 'all';
   const sort = (params.get('sort') ?? 'recent') as keyof typeof SORTS;
   const view = params.get('view') === 'lists' ? 'lists' : 'titles';
-  const [filter, setFilter] = useState('');
+  // Kept in the address so it's still there when you come back from a title.
+  const filter = params.get('q') ?? '';
+  const setFilter = (q: string) => {
+    const next = new URLSearchParams(params);
+    if (q) next.set('q', q);
+    else next.delete('q');
+    setParams(next, { replace: true });
+  };
   const update = (k: string, v: string) => {
     const next = new URLSearchParams(params);
     next.set(k, v);
@@ -135,7 +142,7 @@ export default function Library() {
             );
           })}
         </div>
-        <select value={sort} onChange={(e) => update('sort', e.target.value)} className="rounded-lg bg-surface-2 px-2 py-1 text-sm! font-medium text-muted outline-none">
+        <select value={sort} onChange={(e) => update('sort', e.target.value)} className="select rounded-lg border-0 bg-surface-2 py-1 pl-2.5 text-sm! font-medium text-muted outline-none">
           {Object.entries(SORTS).map(([k, v]) => (
             <option key={k} value={k}>
               {v}
@@ -167,7 +174,9 @@ export default function Library() {
               <div className="relative overflow-hidden rounded-xl shadow-sm ring-1 ring-line">
                 <Cover src={m.cover} title={m.title} type={m.type} className="aspect-[2/3] w-full transition duration-300 group-hover:scale-[1.03]" />
                 {s.rating !== undefined && (
-                  <span className="absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[11px] font-bold text-white backdrop-blur">
+                  <span
+                    className={`absolute right-1.5 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[11px] font-bold text-white backdrop-blur ${m.cover ? 'top-1.5' : 'bottom-1.5'}`}
+                  >
                     <span className="text-star">★</span>
                     {fmtRating(s.rating)}
                   </span>
@@ -240,7 +249,7 @@ function Lists() {
               <p className="mt-1.5 truncate font-semibold">
                 {l.emoji} {l.name}
               </p>
-              <p className="text-xs text-muted">{l.items.length} titles</p>
+              <p className="text-xs text-muted">{l.items.length} {l.items.length === 1 ? 'title' : 'titles'}</p>
             </Link>
           ))}
         </div>

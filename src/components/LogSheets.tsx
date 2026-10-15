@@ -152,6 +152,7 @@ export function ProgressSheet({
   currentPage,
   onReachedEnd,
   initialMinutes,
+  onSaved,
 }: {
   media: Media;
   open: boolean;
@@ -160,6 +161,7 @@ export function ProgressSheet({
   onReachedEnd: () => void;
   /** Pre-filled from a stopped timer. */
   initialMinutes?: number;
+  onSaved?: () => void;
 }) {
   const [date, setDate] = useState<string | null>(todayKey());
   const [mode, setMode] = useState<'page' | 'count'>('page');
@@ -183,7 +185,7 @@ export function ProgressSheet({
   const to = mode === 'page' ? n : from + n;
   const pages = to - from;
   const tooFar = !!media.totalPages && to > media.totalPages;
-  const valid = value !== '' && n > 0 && pages > 0 && !tooFar;
+  const valid = value !== '' && Number.isInteger(n) && n > 0 && pages > 0 && !tooFar;
 
   const save = async () => {
     const log = await addLog({
@@ -196,6 +198,7 @@ export function ProgressSheet({
       minutes: Number(minutes) > 0 ? Math.round(Number(minutes)) : undefined,
       note: note || undefined,
     });
+    onSaved?.();
     onClose();
     haptic('success');
     if (media.totalPages && to >= media.totalPages && media.status !== 'completed') onReachedEnd();
@@ -254,7 +257,19 @@ export function ProgressSheet({
 }
 
 /** Log a session (playing, listening…) with how long it lasted. */
-export function SessionSheet({ media, open, onClose, initialMinutes }: { media: Media; open: boolean; onClose: () => void; initialMinutes?: number }) {
+export function SessionSheet({
+  media,
+  open,
+  onClose,
+  initialMinutes,
+  onSaved,
+}: {
+  media: Media;
+  open: boolean;
+  onClose: () => void;
+  initialMinutes?: number;
+  onSaved?: () => void;
+}) {
   const v = verb(getCategory(media.type));
   const [date, setDate] = useState<string | null>(todayKey());
   const [hours, setHours] = useState('');
@@ -271,6 +286,7 @@ export function SessionSheet({ media, open, onClose, initialMinutes }: { media: 
   const minutes = Math.round((Number(hours) || 0) * 60 + (Number(mins) || 0));
   const save = async () => {
     const log = await addLog({ mediaId: media.id, kind: 'session', date, minutes: minutes || undefined, note: note || undefined });
+    onSaved?.();
     onClose();
     haptic('success');
     loggedToast(`${v.past} ${media.title}`, log, media);

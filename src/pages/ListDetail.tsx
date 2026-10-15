@@ -112,7 +112,7 @@ export default function ListDetail() {
             {list.emoji} {list.name}
           </h1>
           {list.description && <p className="mt-1 text-muted">{list.description}</p>}
-          <p className="mt-1 text-sm text-muted">{items.length} titles</p>
+          <p className="mt-1 text-sm text-muted">{items.length} {items.length === 1 ? 'title' : 'titles'}</p>
         </header>
       )}
 
