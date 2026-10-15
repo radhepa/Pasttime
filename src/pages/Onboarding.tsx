@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { SearchResult } from '../types';
-import { saveCategory, TRACK_INFO, useCategories, verb, type Category } from '../lib/categories';
+import { TRACK_INFO, useCategories, verb, type Category } from '../lib/categories';
 import { searchCategory } from '../lib/search';
 import { setLook, setSettings, useSettings } from '../lib/settings';
 import { addAsSeen, isOnboarded, loadPicks, type Picks } from '../lib/onboarding';
 import { celebrate, haptic } from '../lib/feedback';
 import { Button, Cover, Icon } from '../components/ui';
+import { db } from '../db';
 import { SyncCard } from '../components/SyncCard';
 import { Segmented, ThemePicker } from './Settings';
 
@@ -18,6 +19,10 @@ const STARTERS = ['show', 'movie', 'anime', 'book', 'game'];
 
 const SPRING = { type: 'spring', damping: 30, stiffness: 320 } as const;
 const keyOf = (r: SearchResult) => `${r.source}:${r.sourceId}`;
+/** "watched", "read", "listened to", "been to"… for "What have you already ___?" */
+const pastPhrase = (c: Category) => ({ listen: 'listened to', attend: 'been to' })[c.verb as string] ?? verb(c).past.toLowerCase();
+/** Album and podcast art is square; everything else is a poster. */
+const SQUARE = new Set(['album', 'podcast', 'audiobook']);
 
 /**
  * First run: pick your categories, tap what you've already finished, choose a look. Also reachable from
@@ -33,6 +38,10 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   );
   const [seen, setSeen] = useState<Map<string, SearchResult>>(() => new Map());
   const [progress, setProgress] = useState({ done: 0, total: 0, title: '' });
+  // Start fetching the popular titles now, so they're ready by the time you get to them.
+  useEffect(() => {
+    loadPicks().catch(() => undefined);
+  }, []);
   // Leaving setup happens once, whether adding finishes or you go ahead while it's still working.
   const left = useRef(false);
   const leave = () => {
@@ -47,13 +56,14 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     document.getElementById('onboarding-scroll')?.scrollTo(0, 0);
   };
 
+  /** One write for every category that changed; a category's other settings (name, colour, order) are left alone. */
   const saveCategories = async () => {
-    // Only what changed, so a category's other settings (name, colour, order) are left alone.
-    for (const c of all) {
-      const show = chosen.has(c.id);
-      if (show === !c.hidden) continue;
-      await saveCategory({ id: c.id, hidden: !show, ...(c.builtIn ? {} : { custom: true }) });
-    }
+    const changed = all.filter((c) => chosen.has(c.id) === !!c.hidden);
+    if (!changed.length) return;
+    const rows = await db.categories.bulkGet(changed.map((c) => c.id));
+    await db.categories.bulkPut(
+      changed.map((c, i) => ({ ...rows[i], id: c.id, hidden: !chosen.has(c.id), ...(c.builtIn ? {} : { custom: true }) })),
+    );
   };
 
   const finish = async () => {
@@ -144,9 +154,9 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                 <Button
                   disabled={!chosen.size}
                   className="px-6 py-3!"
-                  onClick={async () => {
-                    await saveCategories();
+                  onClick={() => {
                     go('seen');
+                    saveCategories().catch(() => undefined);
                   }}
                 >
                   Continue
@@ -323,7 +333,14 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
     return m;
   }, [seen]);
 
-  if (!picks) return <TileSkeletons />;
+  if (!picks)
+    return (
+      <div>
+        <h1 className="display text-[2.4rem] leading-[1.05] text-balance">What have you already finished?</h1>
+        <p className="mt-2 mb-6 text-muted">Tap everything you've finished. It goes into your library as done, no dates needed.</p>
+        <TileSkeletons />
+      </div>
+    );
   if (!cat)
     return (
       <div>
@@ -332,7 +349,6 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
       </div>
     );
 
-  const v = verb(cat);
   const toggle = (r: SearchResult) => {
     haptic();
     const next = new Map(seen);
@@ -342,7 +358,7 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
   };
   const showing = query.length >= 2 ? results?.items : picks[cat.id];
   const loading = query.length >= 2 && (!results || (!results.items && !results.error));
-  const pastWords = [...new Set(categories.map((c) => verb(c).past.toLowerCase()))].slice(0, 3);
+  const pastWords = [...new Set(categories.map(pastPhrase))].slice(0, 3);
 
   return (
     <div>
@@ -390,7 +406,7 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder={`Find ${/^[aeiou]/i.test(cat.name) ? 'an' : 'a'} ${cat.name.toLowerCase()} you've ${v.past.toLowerCase()}…`}
+              placeholder={`Find ${/^[aeiou]/i.test(cat.name) ? 'an' : 'a'} ${cat.name.toLowerCase()} you've ${pastPhrase(cat)}…`}
               className="field rounded-2xl! py-3! pl-11!"
               enterKeyHint="search"
               autoCorrect="off"
@@ -417,7 +433,7 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
         </div>
       ) : (
         <p className="py-6 text-sm text-muted">
-          {query.length >= 2 ? `No ${cat.plural.toLowerCase()} called “${query}”.` : `Search above for ${cat.plural.toLowerCase()} you've ${v.past.toLowerCase()}.`}
+          {query.length >= 2 ? `No ${cat.plural.toLowerCase()} called “${query}”.` : `Search above for ${cat.plural.toLowerCase()} you've ${pastPhrase(cat)}.`}
         </p>
       )}
     </div>
@@ -437,7 +453,7 @@ function SeenTile({ r, on, index, onToggle }: { r: SearchResult; on: boolean; in
       className="text-left"
     >
       <span className={`relative block overflow-hidden rounded-xl ring-1 transition-shadow duration-200 ${on ? 'shadow-lg ring-2 ring-accent' : 'ring-line'}`}>
-        <Cover src={r.cover} title={r.title} type={r.type} className={`aspect-[2/3] w-full transition duration-300 ${on ? 'scale-[1.04] brightness-[.7]' : ''}`} />
+        <Cover src={r.cover} title={r.title} type={r.type} className={`${SQUARE.has(r.type) ? 'aspect-square' : 'aspect-[2/3]'} w-full transition duration-300 ${on ? 'scale-[1.04] brightness-[.7]' : ''}`} />
         <AnimatePresence>
           {on && (
             <motion.span

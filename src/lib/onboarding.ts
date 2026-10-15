@@ -29,7 +29,14 @@ export function setOnboarded() {
 export type Picks = Record<string, SearchResult[]>;
 
 /** Popular titles per category for the "what have you seen?" step (loaded only when setup runs). */
-export const loadPicks = () => import('../data/onboardingPicks.json').then((m) => m.default as unknown as Picks);
+let picks: Promise<Picks> | undefined;
+export const loadPicks = () =>
+  (picks ??= import('../data/onboardingPicks.json')
+    .then((m) => m.default as unknown as Picks)
+    .catch((e) => {
+      picks = undefined; // offline: try again next time
+      throw e;
+    }));
 
 /**
  * Adds a title you've already finished, with undated entries ("at some point") so it counts toward your
