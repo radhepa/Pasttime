@@ -440,37 +440,30 @@ function PickSeen({ categories, seen, setSeen }: { categories: Category[]; seen:
   );
 }
 
+/**
+ * A cover you can tick. Plain CSS (no motion components) because a grid can hold 90 of them: only the first
+ * rows animate in, and tiles far below the screen aren't drawn until you scroll to them.
+ */
 function SeenTile({ r, on, index, onToggle }: { r: SearchResult; on: boolean; index: number; onToggle: () => void }) {
   return (
-    <motion.button
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ ...SPRING, delay: Math.min(index, 15) * 0.025 }}
-      whileTap={{ scale: 0.94 }}
+    <button
       onClick={onToggle}
       aria-pressed={on}
       aria-label={`${r.title}${r.year ? ` (${r.year})` : ''}`}
-      className="text-left"
+      className={`text-left transition-transform duration-150 [content-visibility:auto] [contain-intrinsic-size:auto_220px] active:scale-[.94] ${index < 12 ? 'animate-rise' : ''}`}
+      style={index < 12 ? { animationDelay: `${index * 25}ms` } : undefined}
     >
       <span className={`relative block overflow-hidden rounded-xl ring-1 transition-shadow duration-200 ${on ? 'shadow-lg ring-2 ring-accent' : 'ring-line'}`}>
         <Cover src={r.cover} title={r.title} type={r.type} className={`${SQUARE.has(r.type) ? 'aspect-square' : 'aspect-[2/3]'} w-full transition duration-300 ${on ? 'scale-[1.04] brightness-[.7]' : ''}`} />
-        <AnimatePresence>
-          {on && (
-            <motion.span
-              initial={{ scale: 0.3, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.3, opacity: 0 }}
-              transition={{ type: 'spring', damping: 13, stiffness: 420 }}
-              className="absolute inset-0 m-auto flex size-11 items-center justify-center rounded-full bg-accent text-on-accent shadow-lg"
-            >
-              <Icon name="check" className="size-6" strokeWidth={3} draw />
-            </motion.span>
-          )}
-        </AnimatePresence>
+        {on && (
+          <span className="animate-pop absolute inset-0 m-auto flex size-11 items-center justify-center rounded-full bg-accent text-on-accent shadow-lg">
+            <Icon name="check" className="size-6" strokeWidth={3} draw />
+          </span>
+        )}
       </span>
       <span className="mt-1.5 line-clamp-2 text-[13px] leading-snug font-semibold">{r.title}</span>
       {r.year && <span className="block text-xs text-muted">{r.year}</span>}
-    </motion.button>
+    </button>
   );
 }
 
