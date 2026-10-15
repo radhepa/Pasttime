@@ -1,26 +1,47 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { motion } from 'motion/react';
 import { addLog, db, touchMedia } from '../db';
 import type { LogEntry, Media } from '../types';
 import { addDays, shortDay, todayKey } from '../lib/dates';
 import { Button, Field, Sheet, StarInput } from './ui';
 import { getCategory, unitPlural, verb } from '../lib/categories';
+import { celebrate, haptic } from '../lib/feedback';
+import { toast } from '../lib/toast';
+
+/** "Logged" toast with an Undo that removes the entry again (and restores the title's status). */
+function loggedToast(text: string, log: LogEntry, media: Media) {
+  toast(text, {
+    label: 'Undo',
+    run: async () => {
+      await db.logs.delete(log.id);
+      await touchMedia(media.id, { status: media.status, rating: media.rating });
+    },
+  });
+}
 
 /** Today / Yesterday / pick a day / (optionally) no date. */
 export function DayPicker({ value, onChange, allowNone }: { value: string | null; onChange: (d: string | null) => void; allowNone?: boolean }) {
   const today = todayKey();
   const yesterday = addDays(today, -1);
   const custom = value !== null && value !== today && value !== yesterday;
-  const chip = (active: boolean) => `rounded-xl px-3 py-2 text-sm font-semibold ${active ? 'bg-accent text-on-accent' : 'bg-surface-2'}`;
+  const pillId = useId();
+  const chip = (active: boolean) =>
+    `relative rounded-xl bg-surface-2 px-3 py-2 text-sm font-semibold transition-colors duration-200 active:scale-95 ${active ? 'text-on-accent' : ''}`;
+  const pill = (active: boolean) =>
+    active && <motion.span layoutId={pillId} className="absolute inset-0 rounded-xl bg-accent" transition={{ type: 'spring', damping: 30, stiffness: 450 }} />;
   return (
     <div className="flex flex-wrap gap-2">
       <button type="button" className={chip(value === today)} onClick={() => onChange(today)}>
-        Today
+        {pill(value === today)}
+        <span className="relative">Today</span>
       </button>
       <button type="button" className={chip(value === yesterday)} onClick={() => onChange(yesterday)}>
-        Yesterday
+        {pill(value === yesterday)}
+        <span className="relative">Yesterday</span>
       </button>
-      <label className={`${chip(custom)} relative`}>
-        {custom ? shortDay(value!) : 'Other day…'}
+      <label className={chip(custom)}>
+        {pill(custom)}
+        <span className="relative">{custom ? shortDay(value!) : 'Other day…'}</span>
         <input
           type="date"
           max={today}
@@ -31,7 +52,8 @@ export function DayPicker({ value, onChange, allowNone }: { value: string | null
       </label>
       {allowNone && (
         <button type="button" className={chip(value === null)} onClick={() => onChange(null)}>
-          Don't remember
+          {pill(value === null)}
+          <span className="relative">Don't remember</span>
         </button>
       )}
     </div>
@@ -46,15 +68,17 @@ export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }:
     setDate(log?.date ?? todayKey());
     setChangingDay(false);
   }, [log?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (!log) return null;
 
   const save = async (rating?: number) => {
-    await db.logs.update(log.id, { rating, date, updatedAt: Date.now() });
+    if (!log) return;
     onClose();
+    await db.logs.update(log.id, { rating, date, updatedAt: Date.now() });
   };
 
   return (
-    <Sheet open onClose={() => save(log.rating)} title={heading}>
+    <Sheet open={!!log} onClose={() => save(log?.rating)} title={heading}>
+      {log && (
+      <>
       {sub && <p className="-mt-1 mb-4 text-sm text-muted">{sub}</p>}
       <div className="flex flex-col items-center gap-2 py-3">
         <StarInput value={log.rating} onChange={(r) => save(r)} size="size-11" />
@@ -72,6 +96,8 @@ export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }:
       <Button variant="soft" className="mt-4 w-full" onClick={() => save(undefined)}>
         Skip rating
       </Button>
+      </>
+      )}
     </Sheet>
   );
 }
@@ -90,9 +116,13 @@ export function OnceSheet({ media, open, onClose }: { media: Media; open: boolea
     }
   }, [open]);
   const save = async () => {
-    await addLog({ mediaId: media.id, kind: 'once', date, rating, note: note || undefined });
-    if (media.status !== 'completed') await touchMedia(media.id, { status: 'completed' });
+    const first = media.status !== 'completed';
+    const log = await addLog({ mediaId: media.id, kind: 'once', date, rating, note: note || undefined });
+    if (first) await touchMedia(media.id, { status: 'completed' });
     onClose();
+    if (first) celebrate();
+    else haptic('success');
+    loggedToast(`${v.past} ${media.title}`, log, media);
   };
   return (
     <Sheet open={open} onClose={onClose} title={`${v.past}${v.past === 'Went' ? ' to' : ''} ${media.title}`}>
@@ -156,7 +186,7 @@ export function ProgressSheet({
   const valid = value !== '' && n > 0 && pages > 0 && !tooFar;
 
   const save = async () => {
-    await addLog({
+    const log = await addLog({
       mediaId: media.id,
       kind: 'progress',
       date,
@@ -167,7 +197,9 @@ export function ProgressSheet({
       note: note || undefined,
     });
     onClose();
+    haptic('success');
     if (media.totalPages && to >= media.totalPages && media.status !== 'completed') onReachedEnd();
+    else loggedToast(`Logged ${units(pages)}`, log, media);
   };
 
   return (
@@ -238,8 +270,10 @@ export function SessionSheet({ media, open, onClose, initialMinutes }: { media: 
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const minutes = Math.round((Number(hours) || 0) * 60 + (Number(mins) || 0));
   const save = async () => {
-    await addLog({ mediaId: media.id, kind: 'session', date, minutes: minutes || undefined, note: note || undefined });
+    const log = await addLog({ mediaId: media.id, kind: 'session', date, minutes: minutes || undefined, note: note || undefined });
     onClose();
+    haptic('success');
+    loggedToast(`${v.past} ${media.title}`, log, media);
   };
   return (
     <Sheet open={open} onClose={onClose} title={`${v.past} ${media.title}`}>
@@ -303,9 +337,11 @@ export function FinishSheet({ media, open, onClose }: { media: Media; open: bool
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async () => {
-    await addLog({ mediaId: media.id, kind: 'finish', date });
+    const log = await addLog({ mediaId: media.id, kind: 'finish', date });
     await touchMedia(media.id, { status: 'completed', rating });
     onClose();
+    celebrate();
+    loggedToast(`Finished ${media.title}`, log, media);
   };
   return (
     <Sheet open={open} onClose={onClose} title={`Finished ${media.title}?`}>

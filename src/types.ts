@@ -20,6 +20,8 @@ export interface Media {
   totalPages?: number;
   /** Shows: "Running" / "Ended" as reported by the database. */
   airStatus?: string;
+  /** Shows: when the episode list was last refreshed from its database (ms). */
+  episodesCheckedAt?: number;
   /** Movies: length in minutes (used for watch-time stats). */
   runtime?: number;
   /** Games */

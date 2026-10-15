@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { db, deleteMedia, uid } from '../db';
 import type { Episode, Media, Status } from '../types';
@@ -19,6 +19,8 @@ export default function EditMedia() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [m, setM] = useState<Media>();
+  /** The title as it was when the form opened, so Save only writes the fields you changed. */
+  const original = useRef<Media>();
   const [creators, setCreators] = useState('');
   const [genres, setGenres] = useState('');
   const [platforms, setPlatforms] = useState('');
@@ -50,6 +52,7 @@ export default function EditMedia() {
         };
       }
       if (!media) return navigate('/library', { replace: true });
+      original.current = media;
       setM(media);
       setCreators(media.creators?.join(', ') ?? '');
       setGenres(media.genres?.join(', ') ?? '');
@@ -74,7 +77,17 @@ export default function EditMedia() {
       platforms: list(platforms).length ? list(platforms) : undefined,
       updatedAt: Date.now(),
     };
-    await db.media.put(media);
+    if (isNew) await db.media.put(media);
+    else {
+      // Only what you edited: a description that loaded in the background, or a change synced from
+      // another device while this form was open, is kept.
+      const before = (original.current ?? {}) as unknown as Record<string, unknown>;
+      const changes = Object.fromEntries(
+        Object.entries(media).filter(([k, v]) => k !== 'updatedAt' && JSON.stringify(v) !== JSON.stringify(before[k])),
+      );
+      for (const k of Object.keys(before)) if (!(k in media)) changes[k] = undefined;
+      if (Object.keys(changes).length) await db.media.update(media.id, { ...changes, updatedAt: media.updatedAt });
+    }
     if (manualEpisodes) {
       // "10, 8, 12" → season 1 has 10 episodes, season 2 has 8… Only adds what's missing.
       const counts = seasonPlan.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0);

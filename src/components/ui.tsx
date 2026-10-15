@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useDragControls, type PanInfo } from 'motion/react';
 import type { MediaType } from '../types';
 import { getCategory } from '../lib/categories';
+import { haptic } from '../lib/feedback';
 
 /* ---------- Icons ---------- */
 
@@ -41,10 +44,11 @@ const PATHS: Record<string, string> = {
   upload: 'M12 20V9M7 14l5-5 5 5M5 4h14',
 };
 
-export function Icon({ name, className = 'size-5', strokeWidth = 1.9 }: { name: string; className?: string; strokeWidth?: number }) {
+/** `draw`: the stroke draws itself in when the icon appears (used for check marks). */
+export function Icon({ name, className = 'size-5', strokeWidth = 1.9, draw }: { name: string; className?: string; strokeWidth?: number; draw?: boolean }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
-      <path d={PATHS[name]} />
+      <path d={PATHS[name]} pathLength={draw ? 1 : undefined} className={draw ? 'animate-draw' : undefined} />
     </svg>
   );
 }
@@ -79,6 +83,8 @@ export function StarDisplay({ value, size = 'size-4' }: { value?: number; size?:
 /** Tap a star to rate 1–5; tap the current rating again to clear it. */
 export function StarInput({ value, onChange, size = 'size-8' }: { value?: number; onChange: (v: number | undefined) => void; size?: string }) {
   const [hover, setHover] = useState<number>();
+  // Bumped on every tap so the filled stars replay their little pop, left to right.
+  const [bump, setBump] = useState(0);
   const shown = hover ?? value ?? 0;
   return (
     <span className="inline-flex items-center gap-1" onMouseLeave={() => setHover(undefined)}>
@@ -87,14 +93,24 @@ export function StarInput({ value, onChange, size = 'size-8' }: { value?: number
           key={n}
           type="button"
           aria-label={`${n} star${n > 1 ? 's' : ''}`}
+          aria-pressed={value != null && n <= value}
           onMouseEnter={() => setHover(n)}
           onClick={(e) => {
             e.stopPropagation();
+            haptic();
+            setHover(undefined);
+            setBump((b) => b + 1);
             onChange(value === n ? undefined : n);
           }}
-          className="transition-transform active:scale-90"
+          className="transition-transform duration-150 active:scale-85"
         >
-          <svg viewBox="0 0 24 24" className={`${size} ${n <= shown ? 'text-star' : 'text-line'}`} fill="currentColor">
+          <svg
+            key={n <= shown ? `on-${bump}` : 'off'}
+            viewBox="0 0 24 24"
+            className={`${size} transition-colors duration-150 ${n <= shown ? 'text-star' : 'text-line'} ${bump && n <= shown ? 'animate-pop' : ''}`}
+            style={{ animationDelay: `${(n - 1) * 35}ms` }}
+            fill="currentColor"
+          >
             <path d={STAR} />
           </svg>
         </button>
@@ -146,26 +162,84 @@ export function TypeBadge({ type }: { type: MediaType }) {
 
 /* ---------- Sheet (bottom sheet on phones, dialog on desktop) ---------- */
 
+const isWide = () => matchMedia('(min-width: 640px)').matches;
+const SPRING = { type: 'spring', damping: 34, stiffness: 420, mass: 0.9 } as const;
+
+/**
+ * Slides up from the bottom on phones (drag the handle or title down to dismiss) and pops in as a dialog
+ * on wider screens. Keep it rendered with `open={false}` rather than unmounting it, so it can slide away.
+ */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: ReactNode }) {
+  const drag = useDragControls();
+  const wide = isWide();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
-  if (!open) return null;
+  const onDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.y > 110 || info.velocity.y > 650) onClose();
+  };
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div key="sheet" className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal aria-label={title}>
+          <motion.div
+            className="absolute inset-0 bg-black/45"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22 }}
+            onClick={onClose}
+          />
+          <motion.div
+            className="pb-safe relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-surface shadow-2xl sm:max-w-md sm:rounded-3xl"
+            initial={wide ? { opacity: 0, scale: 0.94, y: 12 } : { y: '100%' }}
+            animate={wide ? { opacity: 1, scale: 1, y: 0 } : { y: 0 }}
+            exit={wide ? { opacity: 0, scale: 0.96, y: 8, transition: { duration: 0.16 } } : { y: '100%', transition: { type: 'spring', damping: 40, stiffness: 420 } }}
+            transition={SPRING}
+            drag={wide ? false : 'y'}
+            dragControls={drag}
+            dragListener={false}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0.04, bottom: 0.7 }}
+            onDragEnd={onDragEnd}
+          >
+            <div className="shrink-0 touch-none bg-surface px-5 pt-2 pb-2 select-none sm:pt-4" onPointerDown={(e) => drag.start(e)}>
+              <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-line sm:hidden" />
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="min-w-0 text-lg font-semibold">{title}</h2>
+                <button
+                  onClick={onClose}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="shrink-0 rounded-full bg-surface-2 p-1.5 text-muted transition active:scale-90"
+                  aria-label="Close"
+                >
+                  <Icon name="close" className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto overscroll-contain px-5 pb-5">{children}</div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
+/** A progress bar that fills smoothly to its value. */
+export function Bar({ pct, color, className = 'h-2' }: { pct: number; color: string; className?: string }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal>
-      <div className="animate-fade absolute inset-0 bg-black/45 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="animate-sheet pb-safe relative max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-surface shadow-2xl sm:max-w-md sm:rounded-3xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between bg-surface px-5 pt-4 pb-2">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button onClick={onClose} className="rounded-full bg-surface-2 p-1.5 text-muted" aria-label="Close">
-            <Icon name="close" className="size-4" />
-          </button>
-        </div>
-        <div className="px-5 pb-5">{children}</div>
-      </div>
+    <div className={`overflow-hidden rounded-full bg-surface-2 ${className}`}>
+      <motion.div
+        className="h-full rounded-full"
+        style={{ background: color }}
+        initial={{ width: 0 }}
+        animate={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+        transition={{ type: 'spring', damping: 30, stiffness: 140, delay: 0.08 }}
+      />
     </div>
   );
 }
@@ -196,7 +270,7 @@ export function Button({
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-2xl px-4 py-2.5 text-sm font-semibold transition active:scale-[.97] disabled:opacity-40 ${styles} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-2xl px-4 py-2.5 text-sm font-semibold transition duration-150 ease-out active:scale-[.96] disabled:opacity-40 disabled:active:scale-100 ${styles} ${className}`}
     >
       {children}
     </button>

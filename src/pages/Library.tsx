@@ -1,4 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
+import { AnimatePresence, motion } from 'motion/react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { createList, db, newestFirst } from '../db';
@@ -23,7 +24,7 @@ function Chip({ active, onClick, children, color }: { active: boolean; onClick: 
   return (
     <button
       onClick={onClick}
-      className={`flex h-9 shrink-0 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition ${
+      className={`flex h-9 shrink-0 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition duration-200 active:scale-95 ${
         active ? 'border-ink bg-ink text-bg' : 'border-line bg-surface text-ink'
       }`}
     >
@@ -152,10 +153,19 @@ export default function Library() {
         </Empty>
       ) : (
         <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 lg:grid-cols-5">
-          {shown.map(({ m, s }) => (
-            <Link key={m.id} to={`/m/${m.id}`} className="group block">
+          <AnimatePresence initial={false} mode="popLayout">
+          {shown.map(({ m, s }, i) => (
+            <motion.div
+              key={m.id}
+              layout
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1, transition: { type: 'spring', damping: 26, stiffness: 300, delay: Math.min(i, 12) * 0.025 } }}
+              exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.15 } }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            >
+            <Link to={`/m/${m.id}`} className="press group block">
               <div className="relative overflow-hidden rounded-xl shadow-sm ring-1 ring-line">
-                <Cover src={m.cover} title={m.title} type={m.type} className="aspect-[2/3] w-full transition group-hover:scale-[1.03]" />
+                <Cover src={m.cover} title={m.title} type={m.type} className="aspect-[2/3] w-full transition duration-300 group-hover:scale-[1.03]" />
                 {s.rating !== undefined && (
                   <span className="absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[11px] font-bold text-white backdrop-blur">
                     <span className="text-star">★</span>
@@ -167,12 +177,15 @@ export default function Library() {
                     <span className="block h-full" style={{ width: `${s.progress * 100}%`, background: catColor(m.type) }} />
                   </span>
                 )}
-                <span className="absolute bottom-1.5 left-1.5 size-2 rounded-full ring-2 ring-black/30" style={{ background: catColor(m.type) }} />
+                {/* Artwork-less covers already name their category, so the dot would only cover it. */}
+                {m.cover && <span className="absolute bottom-1.5 left-1.5 size-2 rounded-full ring-2 ring-black/30" style={{ background: catColor(m.type) }} />}
               </div>
               <p className="mt-1.5 truncate text-sm font-semibold">{m.title}</p>
               <p className="truncate text-xs text-muted">{s.progressLabel ?? m.year ?? statusLabel(getCategory(m.type), m.status)}</p>
             </Link>
+            </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
         </>
@@ -212,7 +225,7 @@ function Lists() {
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {lists.map(({ l, preview }) => (
-            <Link key={l.id} to={`/lists/${l.id}`} className="block">
+            <Link key={l.id} to={`/lists/${l.id}`} className="press block">
               <div className="grid aspect-square grid-cols-2 grid-rows-2 gap-0.5 overflow-hidden rounded-2xl bg-surface-2 ring-1 ring-line">
                 {[0, 1, 2, 3].map((i) =>
                   preview[i] ? (

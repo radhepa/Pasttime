@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { db, logEpisode } from '../db';
 import type { Episode, LogEntry, Media } from '../types';
@@ -9,6 +10,7 @@ import { currentPage, statsFor } from '../lib/stats';
 import { useSettings } from '../lib/settings';
 import { catColor, Cover, Empty, Icon, StarDisplay, TypeBadge } from '../components/ui';
 import { LogEditor } from '../components/LogEditor';
+import { haptic } from '../lib/feedback';
 import { OnceSheet, ProgressSheet, RatePrompt, SessionSheet } from '../components/LogSheets';
 
 interface DayGroup {
@@ -116,7 +118,7 @@ function EntryRow({ log, media, episode, onEdit }: { log: LogEntry; media: Media
   }
   const rating = log.kind === 'finish' ? media.rating : log.rating;
   return (
-    <button onClick={onEdit} className="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-surface-2">
+    <button onClick={onEdit} className="press flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-surface-2">
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm">{main}</span>
         {(sub || log.note) && <span className="block truncate text-xs text-muted">{[sub, log.note].filter(Boolean).join(' — ')}</span>}
@@ -130,9 +132,17 @@ function EntryRow({ log, media, episode, onEdit }: { log: LogEntry; media: Media
 function DayCard({ groups, episodes, onEdit }: { groups: DayGroup[]; episodes: Map<string, Episode>; onEdit: (l: LogEntry, m: Media) => void }) {
   return (
     <div className="space-y-3">
-      {groups.map((g) => (
-        <div key={g.media.id} className="overflow-hidden rounded-3xl bg-surface shadow-sm">
-          <Link to={`/m/${g.media.id}`} className="flex items-center gap-3 p-3">
+      <AnimatePresence initial={false} mode="popLayout">
+      {groups.map((g, i) => (
+        <motion.div
+          key={g.media.id}
+          layout="position"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0, transition: { type: 'spring', damping: 28, stiffness: 320, delay: Math.min(i, 8) * 0.04 } }}
+          exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.15 } }}
+          className="overflow-hidden rounded-3xl bg-surface shadow-sm"
+        >
+          <Link to={`/m/${g.media.id}`} className="press flex items-center gap-3 p-3">
             <Cover src={g.media.cover} title={g.media.title} type={g.media.type} className="h-16 w-11 shrink-0 rounded-md" />
             <span className="min-w-0 flex-1">
               <TypeBadge type={g.media.type} />
@@ -142,12 +152,23 @@ function DayCard({ groups, episodes, onEdit }: { groups: DayGroup[]; episodes: M
             <Icon name="right" className="size-4 text-muted" />
           </Link>
           <div className="border-t border-line px-1.5 py-1.5">
+            <AnimatePresence initial={false}>
             {g.logs.map((l) => (
-              <EntryRow key={l.id} log={l} media={g.media} episode={l.episodeId ? episodes.get(l.episodeId) : undefined} onEdit={() => onEdit(l, g.media)} />
+              <motion.div
+                key={l.id}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ type: 'spring', damping: 32, stiffness: 340 }}
+              >
+                <EntryRow log={l} media={g.media} episode={l.episodeId ? episodes.get(l.episodeId) : undefined} onEdit={() => onEdit(l, g.media)} />
+              </motion.div>
             ))}
+            </AnimatePresence>
           </div>
-        </div>
+        </motion.div>
       ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -178,58 +199,97 @@ function ContinueRow() {
     }
     return out.sort((a, b) => b.last - a.last).slice(0, 12);
   }, [showRating]);
+  // The item whose sheet is showing (kept after closing so the sheet can slide away).
   const [open, setOpen] = useState<ContinueItem>();
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [prompt, setPrompt] = useState<{ log: LogEntry; ep: Episode; media: Media }>();
+  const [done, setDone] = useState<string>();
   const settings = useSettings();
 
-  if (!items?.length) return null;
+  // Rendered even when the row empties (e.g. you just finished your last show) so the prompt can still show and close.
+  const ratePrompt = (
+    <RatePrompt
+      log={prompt?.log}
+      heading={prompt ? `How was ${episodeCode(prompt.ep.season, prompt.ep.number)}?` : ''}
+      sub={prompt ? `${prompt.media.title} · ${prompt.ep.title ?? ''}` : undefined}
+      onClose={() => setPrompt(undefined)}
+    />
+  );
+  if (!items?.length) return ratePrompt;
 
   const quick = async (it: ContinueItem) => {
     const c = getCategory(it.media.type);
+    if (c.track === 'episodes' && done === it.media.id) return; // just logged: ignore a double tap
+    haptic();
     if (c.track === 'episodes') {
       if (!it.next) return;
+      setDone(it.media.id);
+      setTimeout(() => setDone((d) => (d === it.media.id ? undefined : d)), 1100);
       const log = await logEpisode(it.media, it.next);
       if (settings.promptRating) setPrompt({ log, ep: it.next, media: it.media });
-    } else setOpen(it);
+    } else {
+      setOpen(it);
+      setSheetOpen(true);
+    }
   };
+  const closeSheet = () => setSheetOpen(false);
 
   const track = open ? getCategory(open.media.type).track : undefined;
   return (
     <section className="mb-6">
       <h2 className="mb-2 eyebrow">Continue</h2>
-      <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-        {items.map((it) => {
+      <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto scroll-px-4 px-4 pb-1">
+        {items.map((it, i) => {
           const c = getCategory(it.media.type);
           const disabled = c.track === 'episodes' && !it.next;
+          const justDone = done === it.media.id;
           return (
-            <div key={it.media.id} className="w-28 shrink-0">
-              <Link to={`/m/${it.media.id}`} className="relative block overflow-hidden rounded-xl ring-1 ring-line">
+            <motion.div
+              key={it.media.id}
+              layout="position"
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0, transition: { type: 'spring', damping: 28, stiffness: 300, delay: Math.min(i, 6) * 0.045 } }}
+              className="w-28 shrink-0 snap-start"
+            >
+              <Link to={`/m/${it.media.id}`} className="press relative block overflow-hidden rounded-xl ring-1 ring-line">
                 <Cover src={it.media.cover} title={it.media.title} type={it.media.type} className="aspect-[2/3] w-full" />
                 <span className="absolute inset-x-0 bottom-0 h-1" style={{ background: catColor(it.media.type) }} />
               </Link>
               <p className="mt-1.5 truncate text-sm font-semibold">{it.media.title}</p>
-              <p className="truncate text-xs text-muted">{it.label ?? verb(c).doing}</p>
+              <motion.p key={it.label} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="truncate text-xs text-muted">
+                {it.label ?? verb(c).doing}
+              </motion.p>
               <button
-                disabled={disabled}
+                disabled={disabled && !justDone}
                 onClick={() => quick(it)}
-                className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-lg bg-surface-2 py-1.5 text-xs font-semibold disabled:opacity-40"
+                className={`mt-1.5 flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold transition-colors duration-200 active:scale-95 disabled:opacity-40 ${
+                  justDone ? 'bg-accent text-on-accent' : 'bg-surface-2'
+                }`}
               >
-                <Icon name={c.track === 'episodes' ? 'check' : 'plus'} className="size-3.5" strokeWidth={2.5} />
-                {c.track === 'episodes' ? (disabled ? 'Caught up' : 'Watched') : 'Log'}
+                {justDone ? (
+                  <span key="done" className="animate-pop flex items-center gap-1">
+                    <Icon name="check" className="size-3.5" strokeWidth={2.8} draw />
+                    Logged
+                  </span>
+                ) : (
+                  <>
+                    <Icon name={c.track === 'episodes' ? 'check' : 'plus'} className="size-3.5" strokeWidth={2.5} />
+                    {c.track === 'episodes' ? (disabled ? 'Caught up' : 'Watched') : 'Log'}
+                  </>
+                )}
               </button>
-            </div>
+            </motion.div>
           );
         })}
       </div>
-      {open && track === 'progress' && <ProgressSheet media={open.media} open currentPage={open.page} onClose={() => setOpen(undefined)} onReachedEnd={() => undefined} />}
-      {open && track === 'sessions' && <SessionSheet media={open.media} open onClose={() => setOpen(undefined)} />}
-      {open && track === 'once' && <OnceSheet media={open.media} open onClose={() => setOpen(undefined)} />}
-      <RatePrompt
-        log={prompt?.log}
-        heading={prompt ? `How was ${episodeCode(prompt.ep.season, prompt.ep.number)}?` : ''}
-        sub={prompt ? `${prompt.media.title} · ${prompt.ep.title ?? ''}` : undefined}
-        onClose={() => setPrompt(undefined)}
-      />
+      {open && (
+        <>
+          <ProgressSheet media={open.media} open={sheetOpen && track === 'progress'} currentPage={open.page} onClose={closeSheet} onReachedEnd={() => undefined} />
+          <SessionSheet media={open.media} open={sheetOpen && track === 'sessions'} onClose={closeSheet} />
+          <OnceSheet media={open.media} open={sheetOpen && track === 'once'} onClose={closeSheet} />
+        </>
+      )}
+      {ratePrompt}
     </section>
   );
 }
@@ -337,6 +397,13 @@ export default function Timeline() {
   const recent = useDays(recentDays?.filter((d) => d !== day) ?? []);
 
   const groups = data?.byDay.get(day) ?? [];
+  // Which way the day moved, so its content slides in from that side.
+  const [prevDay, setPrevDay] = useState(day);
+  const [direction, setDirection] = useState(0);
+  if (day !== prevDay) {
+    setDirection(day > prevDay ? 1 : -1);
+    setPrevDay(day);
+  }
   const summary = daySummary(groups);
   const isToday = day === todayKey();
   const currentStreak = counts ? streak(counts) : 0;
@@ -350,7 +417,7 @@ export default function Timeline() {
         </div>
         <div className="flex items-center gap-1">
           {currentStreak > 1 && (
-            <span className="mr-1 flex items-center gap-1.5 rounded-full bg-soft px-3 py-1.5 text-xs font-semibold text-soft-ink" title="Days in a row with something logged">
+            <span key={currentStreak} className="animate-pop mr-1 flex items-center gap-1.5 rounded-full bg-soft px-3 py-1.5 text-xs font-semibold text-soft-ink" title="Days in a row with something logged">
               <Icon name="leaf" className="size-4" />
               {currentStreak}-day streak
             </span>
@@ -407,13 +474,16 @@ export default function Timeline() {
               <button
                 key={d}
                 onClick={() => setDay(d)}
-                className={`flex flex-1 flex-col items-center gap-0.5 rounded-2xl py-2 transition ${selected ? 'bg-accent text-on-accent' : future ? 'text-muted/50' : ''}`}
+                className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-2xl py-2 transition-colors duration-200 active:scale-95 ${selected ? 'text-on-accent' : future ? 'text-muted/50' : ''}`}
               >
-                <span className={`text-[10px] font-semibold uppercase ${selected ? '' : 'text-muted'}`}>
+                {selected && (
+                  <motion.span layoutId="week-day" className="absolute inset-0 rounded-2xl bg-accent" transition={{ type: 'spring', damping: 30, stiffness: 420 }} />
+                )}
+                <span className={`relative text-[10px] font-semibold uppercase ${selected ? '' : 'text-muted'}`}>
                   {parseKey(d).toLocaleDateString(undefined, { weekday: 'narrow' })}
                 </span>
-                <span className={`text-base font-semibold ${d === todayKey() && !selected ? 'text-accent' : ''}`}>{parseKey(d).getDate()}</span>
-                <span className="flex h-1.5 gap-0.5">
+                <span className={`relative text-base font-semibold ${d === todayKey() && !selected ? 'text-accent' : ''}`}>{parseKey(d).getDate()}</span>
+                <span className="relative flex h-1.5 gap-0.5">
                   {types.map((t) => (
                     <span key={t} className="size-1.5 rounded-full" style={{ background: selected ? 'currentColor' : catColor(t) }} />
                   ))}
@@ -429,6 +499,7 @@ export default function Timeline() {
 
       {isToday && <ContinueRow />}
 
+      <motion.div key={day} initial={direction ? { opacity: 0, x: direction * 24 } : false} animate={{ opacity: 1, x: 0 }} transition={{ type: 'spring', damping: 30, stiffness: 320 }}>
       {summary.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2">
           {summary.map((s) => (
@@ -449,6 +520,7 @@ export default function Timeline() {
       ) : (
         data && <DayCard groups={groups} episodes={data.episodes} onEdit={(log, media) => setEditing({ log, media })} />
       )}
+      </motion.div>
 
       {recent && recentDays && recentDays.filter((d) => d !== day).length > 0 && (
         <section className="mt-10">
@@ -459,7 +531,7 @@ export default function Timeline() {
               .map((d) => {
                 const gs = recent.byDay.get(d) ?? [];
                 return (
-                  <button key={d} onClick={() => setDay(d)} className="flex w-full items-center gap-3 rounded-3xl bg-surface p-3 text-left">
+                  <button key={d} onClick={() => setDay(d)} className="press flex w-full items-center gap-3 rounded-3xl bg-surface p-3 text-left">
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold">{dayLabel(d)}</span>
                       <span className="block truncate text-sm text-muted">{daySummary(gs).join(' · ')}</span>

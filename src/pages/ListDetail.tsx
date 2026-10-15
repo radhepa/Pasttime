@@ -41,8 +41,19 @@ export default function ListDetail() {
     save({ items: next });
   };
   const remove = (m: Media) => {
+    const at = list.items.indexOf(m.id);
     toggleInList(list.id, m.id);
-    toast(`Removed ${m.title}`, { label: 'Undo', run: () => save({ items: list.items }) });
+    // Undo puts back just this title, where it was (other removals since then stay removed).
+    toast(`Removed ${m.title}`, {
+      label: 'Undo',
+      run: async () => {
+        const current = await db.lists.get(list.id);
+        if (!current || current.items.includes(m.id)) return;
+        const items = [...current.items];
+        items.splice(Math.min(at, items.length), 0, m.id);
+        await save({ items });
+      },
+    });
   };
 
   return (

@@ -43,6 +43,7 @@ export function stopTimer() {
 }
 
 export const cancelTimer = () => save(null);
+export const getTimer = () => current;
 
 export function useTimer() {
   return useSyncExternalStore(

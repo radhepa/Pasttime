@@ -1,4 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
+import { motion } from 'motion/react';
+import { haptic } from '../lib/feedback';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { addFromResult, db } from '../db';
@@ -29,10 +31,32 @@ function useOnline() {
   return online;
 }
 
-function ResultRow({ r, inLibrary, onOpen, onAdd }: { r: SearchResult; inLibrary?: string; onOpen: () => void; onAdd: () => void }) {
+/** Placeholder rows while a database is being searched. */
+function SkeletonRows() {
   return (
-    <div className="flex items-center gap-3 rounded-2xl p-2 transition hover:bg-surface">
-      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+    <div aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-3 p-2" style={{ opacity: 1 - i * 0.25 }}>
+          <span className="skeleton h-[72px] w-12 shrink-0 rounded-md" />
+          <span className="flex-1 space-y-2">
+            <span className="skeleton block h-3.5 w-3/5 rounded-full" />
+            <span className="skeleton block h-3 w-2/5 rounded-full" />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResultRow({ r, inLibrary, justAdded, index, onOpen, onAdd }: { r: SearchResult; inLibrary?: string; justAdded?: boolean; index: number; onOpen: () => void; onAdd: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', damping: 30, stiffness: 340, delay: Math.min(index, 8) * 0.035 }}
+      className="flex items-center gap-3 rounded-2xl p-2 transition-colors hover:bg-surface"
+    >
+      <button onClick={onOpen} className="press flex min-w-0 flex-1 items-center gap-3 text-left">
         <Cover src={r.cover} title={r.title} type={r.type} className="h-[72px] w-12 shrink-0 rounded-md shadow-sm" />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{r.title}</span>
@@ -43,15 +67,21 @@ function ResultRow({ r, inLibrary, onOpen, onAdd }: { r: SearchResult; inLibrary
         </span>
       </button>
       {inLibrary ? (
-        <Link to={`/m/${inLibrary}`} className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-2 text-accent" aria-label="In your library">
-          <Icon name="check" className="size-5" strokeWidth={2.5} />
+        <Link
+          to={`/m/${inLibrary}`}
+          className={`flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-2 text-accent ${justAdded ? 'animate-ring' : ''}`}
+          aria-label="In your library"
+        >
+          <span className={justAdded ? 'animate-pop' : undefined}>
+            <Icon name="check" className="size-5" strokeWidth={2.5} draw={justAdded} />
+          </span>
         </Link>
       ) : (
-        <button onClick={onAdd} className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent" aria-label={`Add ${r.title}`}>
+        <button onClick={onAdd} className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition active:scale-85" aria-label={`Add ${r.title}`}>
           <Icon name="plus" className="size-5" strokeWidth={2.5} />
         </button>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -128,7 +158,10 @@ export default function Search() {
     setParams(next, { replace: true });
   };
 
+  const [added, setAdded] = useState<Set<string>>(() => new Set());
   const add = async (r: SearchResult, open: boolean) => {
+    haptic();
+    setAdded((a) => new Set(a).add(`${r.source}:${r.sourceId}`));
     const id = await addFromResult(r);
     if (open) navigate(`/m/${id}`);
     else toast(`Added ${r.title}`, { label: 'Open', run: () => navigate(`/m/${id}`) });
@@ -164,9 +197,12 @@ export default function Search() {
             <button
               key={t}
               onClick={() => setType(t)}
-              className={`shrink-0 rounded-lg px-3 py-1 text-sm font-medium ${type === t ? 'bg-surface text-ink shadow-sm ring-1 ring-line' : 'text-muted'}`}
+              className={`relative shrink-0 rounded-lg px-3 py-1 text-sm font-medium transition-colors ${type === t ? 'text-ink' : 'text-muted'}`}
             >
-              {t === 'all' ? 'All' : `${getCategory(t).emoji} ${getCategory(t).plural}`}
+              {type === t && (
+                <motion.span layoutId="search-type" className="absolute inset-0 rounded-lg bg-surface shadow-sm ring-1 ring-line" transition={{ type: 'spring', damping: 30, stiffness: 420 }} />
+              )}
+              <span className="relative">{t === 'all' ? 'All' : `${getCategory(t).emoji} ${getCategory(t).plural}`}</span>
             </button>
           ))}
         </div>
@@ -241,13 +277,15 @@ export default function Search() {
                     </button>
                   )}
                 </div>
-                {r.loading && <p className="px-2 py-3 text-sm text-muted">Searching…</p>}
+                {r.loading && <SkeletonRows />}
                 {r.error && <p className="px-2 py-3 text-sm text-red-500">Couldn't reach the {c.name.toLowerCase()} database ({r.error}).</p>}
                 {items?.length === 0 && <p className="px-2 py-3 text-sm text-muted">No matches.</p>}
-                {items?.map((it) => (
+                {items?.map((it, i) => (
                   <ResultRow
                     key={`${it.source}:${it.sourceId}`}
+                    index={i}
                     r={it}
+                    justAdded={added.has(`${it.source}:${it.sourceId}`)}
                     inLibrary={library?.bySource.get(`${it.source}:${it.sourceId}`)}
                     onOpen={() => add(it, true)}
                     onAdd={() => add(it, false)}

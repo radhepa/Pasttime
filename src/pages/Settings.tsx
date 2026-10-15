@@ -1,9 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { motion } from 'motion/react';
 import { Link, useLocation } from 'react-router-dom';
 import { db, exportAll, importAll } from '../db';
 import { todayKey } from '../lib/dates';
-import { setSettings, useSettings, type Palette } from '../lib/settings';
+import { setLook, setSettings, useSettings, type Palette } from '../lib/settings';
 import { moveCategory, saveCategory, TRACK_INFO, unitPlural, useCategories, type Category } from '../lib/categories';
 import { fillMissingDetails, importCsv, importLetterboxdWatchlist } from '../lib/importers';
 import { toast } from '../lib/toast';
@@ -39,11 +40,13 @@ const Switch = ({ on }: { on: boolean }) => (
 );
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  const pillId = useId();
   return (
     <div className="flex gap-1 rounded-xl bg-surface-2 p-1">
       {options.map(([k, label]) => (
-        <button key={k} onClick={() => onChange(k)} className={`flex-1 rounded-lg py-1.5 text-sm font-semibold ${value === k ? 'bg-surface shadow-sm' : 'text-muted'}`}>
-          {label}
+        <button key={k} onClick={() => onChange(k)} className={`relative flex-1 rounded-lg py-1.5 text-sm font-semibold transition-colors ${value === k ? '' : 'text-muted'}`}>
+          {value === k && <motion.span layoutId={pillId} className="absolute inset-0 rounded-lg bg-surface shadow-sm" transition={{ type: 'spring', damping: 30, stiffness: 420 }} />}
+          <span className="relative">{label}</span>
         </button>
       ))}
     </div>
@@ -72,7 +75,7 @@ function ThemePicker() {
             role="radio"
             aria-checked={on}
             aria-label={`${t.name}: ${t.mood}`}
-            onClick={() => setSettings({ palette: t.id })}
+            onClick={() => setLook({ palette: t.id })}
             className={`flex flex-col gap-2.5 rounded-2xl border-2 bg-surface-2/50 p-2 pb-3 text-left transition ${on ? 'border-accent' : 'border-transparent'}`}
           >
             <span className="relative flex h-16 flex-col gap-1.5 rounded-xl p-2.5" style={{ background: bg }}>
@@ -193,13 +196,13 @@ export default function Settings() {
       const data = JSON.parse(await f.text());
       if (data.app !== 'pastime') throw new Error('not a Pastime backup');
       await importAll(data);
-      setMsg(`Restored ${data.media.length} titles and ${data.logs.length} entries.`);
+      setMsg(`Restored ${data.media?.length ?? 0} titles and ${data.logs?.length ?? 0} entries.`);
     } catch (e) {
       setMsg(`Couldn't import: ${(e as Error).message}`);
     }
   };
 
-  const doImportCsv = async (files: FileList) => {
+  const doImportCsv = async (files: File[]) => {
     const out: string[] = [];
     for (const f of Array.from(files)) {
       try {
@@ -226,7 +229,7 @@ export default function Settings() {
       <Card title="Appearance" id="appearance">
         <Segmented
           value={s.theme}
-          onChange={(theme) => setSettings({ theme })}
+          onChange={(theme) => setLook({ theme })}
           options={[
             ['light', 'Light'],
             ['dark', 'Dark'],
@@ -291,7 +294,11 @@ export default function Settings() {
           >
             {filling ?? 'Fill in missing covers'}
           </Button>
-          <input ref={csvFile} type="file" accept=".csv,text/csv" multiple hidden onChange={(e) => e.target.files?.length && doImportCsv(e.target.files)} />
+          <input ref={csvFile} type="file" accept=".csv,text/csv" multiple hidden onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = '';
+            if (files.length) doImportCsv(files);
+          }} />
         </div>
       </Card>
 
@@ -326,7 +333,11 @@ export default function Settings() {
           <Button variant="soft" onClick={() => backupFile.current?.click()}>
             <Icon name="upload" className="size-4" /> Restore backup
           </Button>
-          <input ref={backupFile} type="file" accept="application/json,.json" hidden onChange={(e) => e.target.files?.[0] && doImportBackup(e.target.files[0])} />
+          <input ref={backupFile} type="file" accept="application/json,.json" hidden onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = ''; // so picking the same file again still works
+              if (f) doImportBackup(f);
+            }} />
         </div>
         {daysSinceBackup !== undefined && daysSinceBackup < 14 && <p className="text-xs text-muted">Last backup: {daysSinceBackup === 0 ? 'today' : `${daysSinceBackup} days ago`}</p>}
       </Card>

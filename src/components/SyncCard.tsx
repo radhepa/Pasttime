@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { signIn, signOut, syncNow, useSyncStatus, type SyncStatus } from '../lib/sync';
+import { finishAccountSwitch, signIn, signOut, syncNow, useSyncStatus, type SyncStatus } from '../lib/sync';
 import { Button, Field, Icon } from './ui';
 
 function ago(ms: number) {
@@ -71,14 +71,17 @@ function SignInForm({ status }: { status: SyncStatus }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  /** Signed in, but this device holds another account's library: ask before mixing them. */
+  const [switching, setSwitching] = useState<string>();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      await signIn(email, password);
+      const result = await signIn(email, password);
       setPassword('');
+      if (!result.ok) setSwitching(result.libraryOf);
     } catch (err) {
       const m = (err as Error).message ?? String(err);
       setError(/invalid login/i.test(m) ? 'That email and password don’t match. It’s the same account you use for FitPip.' : !navigator.onLine ? 'You’re offline. Connect and try again.' : m);
@@ -86,6 +89,34 @@ function SignInForm({ status }: { status: SyncStatus }) {
       setBusy(false);
     }
   };
+
+  if (switching) {
+    const choose = async (choice: 'replace' | 'merge' | 'cancel') => {
+      setBusy(true);
+      await finishAccountSwitch(choice);
+      setBusy(false);
+      setSwitching(undefined);
+    };
+    return (
+      <div className="space-y-3">
+        <p className="text-sm">
+          The library on this device came from <span className="font-semibold">{switching}</span>. What should happen to it?
+        </p>
+        <div className="flex flex-col gap-2">
+          <Button disabled={busy} onClick={() => choose('replace')}>
+            Replace it with {email.trim() || 'this account'}’s library
+          </Button>
+          <Button variant="soft" disabled={busy} onClick={() => choose('merge')}>
+            Add it to {email.trim() || 'this account'}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => choose('cancel')}>
+            Cancel
+          </Button>
+        </div>
+        <p className="text-xs text-muted">Replacing only clears this device; nothing is deleted from either account.</p>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={submit} className="space-y-3">

@@ -147,7 +147,13 @@ async function importLetterboxd(rows: Record<string, string>[], file: 'diary' | 
     const logs = (await db.logs.where('mediaId').equals(media.id).toArray()).filter((l) => l.kind === 'once');
     if (file === 'diary') {
       const date = toDate(r['Watched Date'] || r.Date);
-      if (!logs.some((l) => l.date === date)) await log({ mediaId: media.id, kind: 'once', date, rating: stars(r.Rating), note: r.Tags || undefined }, stats);
+      const undated = logs.find((l) => l.date === null);
+      if (logs.some((l) => l.date === date)) {
+        // already have this viewing
+      } else if (undated) {
+        // watched.csv / ratings.csv went first and made an undated entry: give it this date instead of adding a second viewing
+        await db.logs.update(undated.id, { date, rating: stars(r.Rating) ?? undated.rating, note: r.Tags || undated.note, updatedAt: Date.now() });
+      } else await log({ mediaId: media.id, kind: 'once', date, rating: stars(r.Rating), note: r.Tags || undefined }, stats);
     } else if (file === 'watched' && logs.length === 0) {
       await log({ mediaId: media.id, kind: 'once', date: null }, stats);
     } else if (file === 'ratings' && stars(r.Rating)) {

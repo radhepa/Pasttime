@@ -1,5 +1,6 @@
-import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Route, Routes, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { useEffect, useRef } from 'react';
+import { MotionConfig, motion } from 'motion/react';
 import { Icon } from './components/ui';
 import { TimerBar, Toaster } from './components/Overlays';
 import { useTimer } from './lib/timer';
@@ -21,8 +22,20 @@ const TABS = [
   { to: '/settings', icon: 'settings', label: 'Settings' },
 ];
 
+/** Detail screens slide in from the side (and back out the other way); tabs just rise in. */
+function usePageMotion(pathname: string) {
+  const pop = useNavigationType() === 'POP';
+  const isDetail = /^\/(m|lists|new)\//.test(pathname);
+  if (!isDetail) return { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 } };
+  return { initial: { opacity: 0, x: pop ? -28 : 28 }, animate: { opacity: 1, x: 0 } };
+}
+
+const tabActive = (to: string, pathname: string) => (to === '/' ? pathname === '/' : pathname.startsWith(to));
+
 export default function App() {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const pageMotion = usePageMotion(pathname);
   const navigate = useNavigate();
   const main = useRef<HTMLElement>(null);
   const timer = useTimer();
@@ -45,6 +58,7 @@ export default function App() {
   }, [navigate]);
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="flex h-dvh">
       {/* Desktop sidebar */}
       <nav className="hidden w-56 shrink-0 flex-col gap-1 border-r border-line bg-surface px-3 py-5 md:flex">
@@ -58,13 +72,16 @@ export default function App() {
             to={t.to}
             end={t.to === '/'}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                isActive ? 'bg-surface-2 text-ink' : 'text-muted hover:text-ink'
-              }`
+              `relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'text-ink' : 'text-muted hover:text-ink'}`
             }
           >
-            <Icon name={t.icon} />
-            {t.label}
+            {tabActive(t.to, pathname) && (
+              <motion.span layoutId="side-pill" className="absolute inset-0 rounded-xl bg-surface-2" transition={{ type: 'spring', damping: 30, stiffness: 400 }} />
+            )}
+            <span className="relative flex items-center gap-3">
+              <Icon name={t.icon} />
+              {t.label}
+            </span>
           </NavLink>
         ))}
         <p className="mt-auto px-3 text-xs text-muted">
@@ -74,7 +91,8 @@ export default function App() {
 
       <main ref={main} className={`pt-safe min-w-0 flex-1 overflow-y-auto ${timer ? 'pb-44 md:pb-28' : 'pb-24 md:pb-8'}`}>
         <div className="mx-auto max-w-3xl px-4 py-4 md:px-8 md:py-8">
-          <Routes>
+          <motion.div key={pathname} initial={pageMotion.initial} animate={pageMotion.animate} transition={{ type: 'spring', damping: 32, stiffness: 340, mass: 0.8 }}>
+          <Routes location={location}>
             <Route path="/" element={<Timeline />} />
             <Route path="/library" element={<Library />} />
             <Route path="/lists/:id" element={<ListDetail />} />
@@ -85,6 +103,7 @@ export default function App() {
             <Route path="/new/:type" element={<EditMedia />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
+          </motion.div>
         </div>
       </main>
 
@@ -100,15 +119,25 @@ export default function App() {
               to={t.to}
               end={t.to === '/'}
               className={({ isActive }) =>
-                `flex flex-1 flex-col items-center gap-0.5 pt-2 pb-1.5 text-[10px] font-medium ${isActive ? 'text-accent' : 'text-muted'}`
+                `relative flex flex-1 flex-col items-center gap-0.5 pt-2 pb-1.5 text-[10px] font-medium transition-colors ${isActive ? 'text-accent' : 'text-muted'}`
               }
             >
-              <Icon name={t.icon} className="size-6" />
-              {t.label}
+              {tabActive(t.to, pathname) && (
+                <motion.span
+                  layoutId="tab-pill"
+                  className="absolute top-1 h-8 w-14 rounded-full bg-soft"
+                  transition={{ type: 'spring', damping: 30, stiffness: 420 }}
+                />
+              )}
+              <motion.span className="relative" whileTap={{ scale: 0.82 }} transition={{ type: 'spring', damping: 15, stiffness: 500 }}>
+                <Icon name={t.icon} className="size-6" />
+              </motion.span>
+              <span className="relative">{t.label}</span>
             </NavLink>
           ))}
         </div>
       </nav>
     </div>
+    </MotionConfig>
   );
 }

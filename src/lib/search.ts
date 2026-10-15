@@ -188,6 +188,7 @@ interface AniMedia {
   id: number;
   title: { romaji?: string; english?: string };
   episodes?: number | null;
+  nextAiringEpisode?: { episode: number } | null;
   chapters?: number | null;
   volumes?: number | null;
   startDate?: { year?: number };
@@ -215,7 +216,7 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
   else if (kind === 'MANGA') vars.nf = 'NOVEL'; // manga search shouldn't drown in light novels
   const data = await anilist<{ Page: { media: AniMedia[] } }>(
     `query($s:String,$t:MediaType,$f:MediaFormat,$nf:MediaFormat){Page(perPage:15){media(search:$s,type:$t,format:$f,format_not:$nf,isAdult:false){
-      id title{romaji english} episodes chapters volumes startDate{year} coverImage{large} format status genres description(asHtml:false)
+      id title{romaji english} episodes nextAiringEpisode{episode} chapters volumes startDate{year} coverImage{large} format status genres description(asHtml:false)
       studios(isMain:true){nodes{name}} staff(perPage:2){nodes{name{full}}}}}}`,
     vars,
   );
@@ -234,7 +235,8 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
       genres: m.genres?.slice(0, 4),
       creators: creators?.length ? creators : undefined,
       airStatus: m.status,
-      episodeCount: kind === 'ANIME' ? (m.episodes ?? undefined) : undefined,
+      // Airing shows only get the episodes that are out so far (AniList's total includes future ones).
+      episodeCount: kind === 'ANIME' ? airedAnimeEpisodes(m) || undefined : undefined,
       totalPages: kind === 'MANGA' ? (units ?? undefined) : undefined,
       subtitle: [
         m.startDate?.year,
@@ -249,13 +251,22 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
   });
 }
 
-/** Latest episode count for an anime (picks up new episodes of airing shows). */
+/** Episodes out so far: up to the next one due to air, or the full count once it's finished. */
+const airedAnimeEpisodes = (m: { episodes?: number | null; nextAiringEpisode?: { episode: number } | null }) =>
+  m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : (m.episodes ?? 0);
+
+/** Latest aired-episode count and status for an anime (picks up new episodes of airing shows). */
 export async function fetchAnilistEpisodeCount(id: string) {
-  const data = await anilist<{ Media: { episodes?: number; nextAiringEpisode?: { episode: number } } }>(
-    'query($id:Int){Media(id:$id){episodes nextAiringEpisode{episode}}}',
+  const data = await anilist<{ Media: { episodes?: number; status?: string; nextAiringEpisode?: { episode: number } } }>(
+    'query($id:Int){Media(id:$id){episodes status nextAiringEpisode{episode}}}',
     { id: Number(id) },
   );
-  return data.Media.episodes ?? (data.Media.nextAiringEpisode ? data.Media.nextAiringEpisode.episode - 1 : 0);
+  return { count: airedAnimeEpisodes(data.Media), status: data.Media.status };
+}
+
+/** A TV show's current status ("Running", "Ended"…), so finished shows can complete. */
+export async function fetchShowStatus(showId: string) {
+  return (await getJson<{ status?: string }>(`https://api.tvmaze.com/shows/${showId}`)).status;
 }
 
 /* ---------------- Podcasts & audiobooks: Apple ---------------- */
@@ -291,10 +302,13 @@ async function searchItunes(q: string, type: string, media: 'podcast' | 'audiobo
 
 /* ---------------- Albums: MusicBrainz + Cover Art Archive ---------------- */
 
+/** MusicBrainz search is Lucene syntax: "AC/DC" or "Help!" must be escaped or the request fails. */
+const luceneEscape = (q: string) => q.replace(/[+\-&|!(){}\[\]^"~*?:\\/]/g, (c) => `\\${c}`);
+
 async function searchMusicBrainz(q: string, type: string) {
   const data = await getJson<{
     'release-groups': { id: string; title: string; 'first-release-date'?: string; 'primary-type'?: string; 'artist-credit'?: { name: string }[] }[];
-  }>(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(`${q} AND (primarytype:album OR primarytype:ep)`)}&fmt=json&limit=15`);
+  }>(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(`(${luceneEscape(q)}) AND (primarytype:album OR primarytype:ep)`)}&fmt=json&limit=15`);
   return data['release-groups'].map((r): SearchResult => {
     const artist = r['artist-credit']?.map((a) => a.name).join(', ');
     return {

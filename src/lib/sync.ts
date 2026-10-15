@@ -12,6 +12,7 @@ import { useSyncExternalStore } from 'react';
 import type { Transaction } from 'dexie';
 import type { RealtimeChannel, User } from '@supabase/supabase-js';
 import { db } from '../db';
+import type { Media } from '../types';
 import { supabase } from './supabase';
 import { getSettings, onLocalSettingsChange, setSettings, type Settings } from './settings';
 
@@ -28,11 +29,15 @@ const FROM_SYNC = '__pastimeFromSync';
 const PAGE = 1000;
 
 type Op = 'put' | 'del';
-/** The account this device syncs with. `ready` once the first merge with the cloud copy finished. */
+/**
+ * The account this device's library belongs to. `ready` once the first merge with the cloud copy finished.
+ * `signedOut`: you signed out here; changes (including deletions) are still noted, and go up when you sign back in.
+ */
 interface Link {
   id: string;
   email?: string;
   ready: boolean;
+  signedOut?: boolean;
 }
 
 function readJSON<T>(key: string): T | null {
@@ -81,7 +86,9 @@ export interface SyncStatus {
   pending: number;
 }
 
-let status: SyncStatus = { state: link ? 'syncing' : 'off', email: link?.email, pending: dirty.size };
+const active = () => !!link && !link.signedOut;
+
+let status: SyncStatus = { state: active() ? 'syncing' : 'off', email: link?.email, pending: dirty.size };
 const listeners = new Set<() => void>();
 function setStatus(patch: Partial<SyncStatus>) {
   status = { ...status, ...patch, email: link?.email, pending: dirty.size };
@@ -116,8 +123,9 @@ for (const t of TABLES) {
   table.hook('creating', (key, obj, tx) => {
     if (!fromSync(tx)) mark(t, String(key ?? (obj as { id: string }).id), 'put');
   });
-  table.hook('updating', (_mods, key, _obj, tx) => {
-    if (!fromSync(tx)) mark(t, String(key), 'put');
+  table.hook('updating', (mods, key, _obj, tx) => {
+    // Dexie calls this for every put, even when nothing changed (e.g. refreshing a show's episodes).
+    if (!fromSync(tx) && Object.keys(mods as object).length) mark(t, String(key), 'put');
   });
   table.hook('deleting', (key, _obj, tx) => {
     if (!fromSync(tx)) mark(t, String(key), 'del');
@@ -258,6 +266,7 @@ async function pull(firstMerge: boolean) {
   if (since) writeJSON(CURSOR_KEY, new Date(Date.parse(since) - 30_000).toISOString());
 
   if (firstMerge) {
+    await foldDuplicateTitles(seen);
     // Everything only this device has (or has newer) goes up.
     for (const t of TABLES) {
       const keys = ((await db.table(t).toArray()) as { id: string }[]).map((r) => r.id);
@@ -269,6 +278,56 @@ async function pull(firstMerge: boolean) {
     });
     if (!seen.has(keyOf('settings', SETTINGS_ID))) mark('settings', SETTINGS_ID, 'put');
   }
+}
+
+/**
+ * First merge: a title both devices added before syncing (same show from the same database) would end up
+ * twice. Fold this device's copy into the cloud one: its history, episodes and list spots move over.
+ */
+async function foldDuplicateTitles(seen: Set<string>) {
+  const media = await db.media.toArray();
+  const sourceKey = (m: Media) => (m.source && m.sourceId && m.source !== 'manual' ? `${m.source}:${m.sourceId}` : undefined);
+  const cloud = new Map<string, Media>();
+  for (const m of media) {
+    const k = sourceKey(m);
+    if (k && seen.has(keyOf('media', m.id))) cloud.set(k, m);
+  }
+  const dupes = media.filter((m) => !seen.has(keyOf('media', m.id)) && cloud.has(sourceKey(m) ?? ''));
+  if (!dupes.length) return;
+  const touchedLists = new Set<string>();
+  await db.transaction('rw', [db.media, db.episodes, db.logs, db.lists], async (tx) => {
+    (tx as unknown as Record<string, unknown>)[FROM_SYNC] = true;
+    const lists = await db.lists.toArray();
+    for (const local of dupes) {
+      const keep = cloud.get(sourceKey(local)!)!;
+      const [localEps, keepEps, localLogs, keepLogs] = await Promise.all([
+        db.episodes.where('mediaId').equals(local.id).toArray(),
+        db.episodes.where('mediaId').equals(keep.id).toArray(),
+        db.logs.where('mediaId').equals(local.id).toArray(),
+        db.logs.where('mediaId').equals(keep.id).toArray(),
+      ]);
+      const slot = (e: { season: number; number: number }) => `${e.season}x${e.number}`;
+      const keepSlot = new Map(keepEps.map((e) => [slot(e), e.id]));
+      const epMap = new Map(localEps.map((e) => [e.id, keepSlot.get(slot(e))]));
+      const already = new Set(keepLogs.map((l) => `${l.kind}|${l.episodeId ?? ''}|${l.date}`));
+      const moved = localLogs
+        .map((l) => ({ ...l, mediaId: keep.id, episodeId: l.episodeId ? (epMap.get(l.episodeId) ?? l.episodeId) : undefined }))
+        .filter((l) => !already.has(`${l.kind}|${l.episodeId ?? ''}|${l.date}`)); // the same viewing logged on both devices
+      await db.logs.bulkDelete(localLogs.map((l) => l.id));
+      await db.logs.bulkPut(moved);
+      await db.episodes.bulkDelete(localEps.filter((e) => keepSlot.has(slot(e))).map((e) => e.id));
+      const extraEps = localEps.filter((e) => !keepSlot.has(slot(e))).map((e) => ({ ...e, mediaId: keep.id }));
+      if (extraEps.length) await db.episodes.bulkPut(extraEps);
+      await db.media.delete(local.id);
+      for (const l of lists)
+        if (l.items.includes(local.id)) {
+          l.items = [...new Set(l.items.map((x) => (x === local.id ? keep.id : x)))];
+          touchedLists.add(l.id);
+        }
+    }
+    await db.lists.bulkPut(lists.filter((l) => touchedLists.has(l.id)));
+  });
+  touchedLists.forEach((id) => mark('lists', id, 'put'));
 }
 
 /* ---------------- Running it ---------------- */
@@ -283,7 +342,7 @@ function scheduleSync(ms: number) {
 }
 
 export function syncNow(): Promise<void> {
-  if (!link) return Promise.resolve();
+  if (!active()) return Promise.resolve();
   if (running) {
     again = true;
     return running;
@@ -306,7 +365,7 @@ export function syncNow(): Promise<void> {
           await pull(false);
         }
         await push();
-      } while (again && link);
+      } while (again && active());
       setStatus({ state: 'synced', lastSyncAt: Date.now() });
     } catch (e) {
       const offline = !navigator.onLine || e instanceof TypeError || /fetch|network/i.test(String((e as Error)?.message));
@@ -323,11 +382,12 @@ let channel: RealtimeChannel | null = null;
 let poll: ReturnType<typeof setInterval> | undefined;
 
 function start() {
-  if (!link) return;
+  if (!link || link.signedOut) return;
+  const id = link.id;
   stop();
   channel = supabase
-    .channel(`pastime-${link.id}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'pastime_rows', filter: `user_id=eq.${link.id}` }, () => scheduleSync(400))
+    .channel(`pastime-${id}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pastime_rows', filter: `user_id=eq.${id}` }, () => scheduleSync(400))
     .subscribe();
   // Realtime can drop quietly (phones suspend web apps), so also check every minute while open.
   poll = setInterval(() => document.visibilityState === 'visible' && void syncNow(), 60_000);
@@ -342,40 +402,80 @@ function stop() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && link) void syncNow();
+  if (document.visibilityState === 'visible' && active()) void syncNow();
   else saveDirty();
 });
-window.addEventListener('online', () => link && void syncNow());
+window.addEventListener('online', () => active() && void syncNow());
 window.addEventListener('pagehide', saveDirty);
 
 // The session ended elsewhere (password changed, or it expired): keep your changes, ask to sign in again.
 supabase.auth.onAuthStateChange((event) => {
-  if (link && event === 'SIGNED_OUT') setStatus({ state: 'signed-out' });
+  if (active() && event === 'SIGNED_OUT') setStatus({ state: 'signed-out' });
 });
 
-if (link) start();
+if (active()) start();
 
 /* ---------------- Account ---------------- */
+
+/** Signed in, but this device's library belongs to a different account: waiting for you to choose. */
+let pendingUser: User | null = null;
+
+export type SignInResult = { ok: true } | { ok: false; libraryOf: string };
 
 /**
  * Signs in with an existing account (the same one as FitPip). There is deliberately no sign-up here:
  * creating an account would also set one up in FitPip.
+ * If this device's library came from another account, nothing is merged until you pick what to do.
  */
-export async function signIn(email: string, password: string) {
+export async function signIn(email: string, password: string): Promise<SignInResult> {
   const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
   if (error) throw error;
-  linkTo(data.user);
+  if (link && link.id !== data.user.id && (await hasLocalData())) {
+    pendingUser = data.user;
+    return { ok: false, libraryOf: link.email ?? 'another account' };
+  }
+  linkTo(data.user, link?.id !== data.user.id);
+  return { ok: true };
 }
 
-function linkTo(user: User) {
-  if (link?.id !== user.id) {
-    // A different account (or the first sign-in on this device): merge from scratch.
+/** After `signIn` found another account's library here: replace it, merge it in, or back out. */
+export async function finishAccountSwitch(choice: 'replace' | 'merge' | 'cancel') {
+  const user = pendingUser;
+  pendingUser = null;
+  if (!user || choice === 'cancel') {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+    return;
+  }
+  if (choice === 'replace') await clearLocalLibrary();
+  linkTo(user, true);
+}
+
+async function hasLocalData() {
+  for (const t of TABLES) if ((await db.table(t).count()) > 0) return true;
+  return false;
+}
+
+/** Empties this device's library without telling the cloud (so nothing is deleted there). */
+async function clearLocalLibrary() {
+  await db.transaction('rw', TABLES.map((t) => db.table(t)), async (tx) => {
+    (tx as unknown as Record<string, unknown>)[FROM_SYNC] = true;
+    for (const t of TABLES) {
+      const ids = ((await db.table(t).toArray()) as { id: string }[]).map((r) => r.id);
+      await db.table(t).bulkDelete(ids);
+    }
+  });
+}
+
+function linkTo(user: User, fresh: boolean) {
+  if (fresh) {
+    // First sign-in on this device, or a different account: merge with the cloud copy from scratch.
     dirty.clear();
     saveDirty();
     writeJSON(CURSOR_KEY, null);
     link = { id: user.id, email: user.email, ready: false };
   } else {
-    link = { ...link, email: user.email };
+    // Same account again: changes made while signed out (deletions too) go up now.
+    link = { ...link!, email: user.email, signedOut: false };
   }
   writeJSON(LINK_KEY, link);
   setStatus({});
@@ -384,20 +484,20 @@ function linkTo(user: User) {
 
 /**
  * Stops syncing on this device only. `scope: 'local'` matters: the default would also sign you out of
- * FitPip and every other device. What's already here stays here.
+ * FitPip and every other device. What's already here stays here, and changes you make are still noted
+ * so they reach your account when you sign back in.
  */
 export async function signOut() {
   stop();
   try {
     await push();
   } catch {
-    /* offline: unsent changes stay on this device */
+    /* offline: unsent changes wait for the next sign-in */
   }
   await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
-  link = null;
-  dirty.clear();
-  saveDirty();
-  writeJSON(LINK_KEY, null);
-  writeJSON(CURSOR_KEY, null);
+  if (link) {
+    link = { ...link, signedOut: true };
+    writeJSON(LINK_KEY, link);
+  }
   setStatus({ state: 'off', lastSyncAt: undefined, error: undefined });
 }

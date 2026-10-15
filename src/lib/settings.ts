@@ -81,6 +81,13 @@ export function setSettings(patch: Partial<Settings>, fromSync = false) {
   if (!fromSync) localListeners.forEach((l) => l());
 }
 
+/** Changes theme or palette with a soft cross-fade where the browser supports View Transitions. */
+export function setLook(patch: Pick<Partial<Settings>, 'theme' | 'palette'>) {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+  if (doc.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) doc.startViewTransition(() => setSettings(patch));
+  else setSettings(patch);
+}
+
 /** Resolves "system" against the OS setting and tags <html data-theme data-palette>. Also mirrored by the inline script in index.html. */
 export function applyTheme() {
   const dark = current.theme === 'dark' || (current.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);

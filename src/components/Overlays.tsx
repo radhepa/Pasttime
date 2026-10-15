@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { dismiss, useToasts } from '../lib/toast';
 import { cancelTimer, elapsed, stopTimer, useTimer } from '../lib/timer';
 import { Icon } from './ui';
@@ -8,10 +9,29 @@ import { getCategory, verb } from '../lib/categories';
 /** Little pop-up messages, some with an Undo button. */
 export function Toaster() {
   const toasts = useToasts();
+  const timer = useTimer();
+  // Sit above the tab bar, and above the timer bar while one is running.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex flex-col items-center gap-2 px-4 md:bottom-8">
+    <div
+      className={`pointer-events-none fixed inset-x-0 z-[60] flex flex-col items-center gap-2 px-4 transition-[bottom] duration-300 ${
+        timer ? 'bottom-[calc(env(safe-area-inset-bottom)+8.75rem)] md:bottom-24' : 'bottom-[calc(env(safe-area-inset-bottom)+5.25rem)] md:bottom-8'
+      }`}
+    >
+      <AnimatePresence initial={false}>
       {toasts.map((t) => (
-        <div key={t.id} className="animate-sheet pointer-events-auto flex items-center gap-3 rounded-full bg-float py-2 pr-2 pl-4 text-sm font-semibold text-float-ink shadow-lg">
+        <motion.div
+          key={t.id}
+          layout
+          initial={{ opacity: 0, y: 24, scale: 0.92 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.18 } }}
+          transition={{ type: 'spring', damping: 26, stiffness: 420 }}
+          drag="x"
+          dragConstraints={{ left: 0, right: 0 }}
+          dragElastic={0.6}
+          onDragEnd={(_, info) => Math.abs(info.offset.x) > 80 && dismiss(t.id)}
+          className="pointer-events-auto flex max-w-full touch-pan-y items-center gap-3 rounded-full bg-float py-2 pr-2 pl-4 text-sm font-semibold text-float-ink shadow-lg"
+        >
           <span>{t.text}</span>
           {t.action ? (
             <button
@@ -19,15 +39,16 @@ export function Toaster() {
                 t.action!.run();
                 dismiss(t.id);
               }}
-              className="rounded-full bg-float-2 px-3 py-1"
+              className="rounded-full bg-float-2 px-3 py-1 transition active:scale-95"
             >
               {t.action.label}
             </button>
           ) : (
             <span className="w-2" />
           )}
-        </div>
+        </motion.div>
       ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -45,15 +66,22 @@ export function TimerBar() {
     const i = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(i);
   }, [timer]);
-  if (!timer) return null;
-
   const stop = () => {
     const done = stopTimer();
     if (done) navigate(`/m/${done.mediaId}?log=${done.kind}&minutes=${done.minutes}`);
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+62px)] z-40 flex justify-center px-3 md:bottom-4 md:left-56">
+    <AnimatePresence>
+    {timer && (
+    <motion.div
+      key="timer"
+      initial={{ y: 90, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 90, opacity: 0 }}
+      transition={{ type: 'spring', damping: 28, stiffness: 360 }}
+      className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+62px)] z-40 flex justify-center px-3 md:bottom-4 md:left-56"
+    >
       <div className="flex w-full max-w-md items-center gap-3 rounded-3xl bg-float py-2 pr-2 pl-4 text-float-ink shadow-xl">
         <span className="relative flex size-2.5">
           <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: DOT }} />
@@ -67,10 +95,12 @@ export function TimerBar() {
         <button onClick={cancelTimer} className="rounded-full p-2 text-float-ink/65" aria-label="Cancel timer">
           <Icon name="close" className="size-4" />
         </button>
-        <button onClick={stop} className="rounded-2xl bg-float-2 px-3.5 py-2.5 text-sm font-semibold">
+        <button onClick={stop} className="rounded-2xl bg-float-2 px-3.5 py-2.5 text-sm font-semibold transition active:scale-95">
           Stop &amp; log
         </button>
       </div>
-    </div>
+    </motion.div>
+    )}
+    </AnimatePresence>
   );
 }

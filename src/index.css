@@ -315,3 +315,82 @@ select {
 .animate-fade {
   animation: fade-in 0.18s ease-out;
 }
+
+/* A springy pop for stars and check marks. */
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+  }
+  55% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.animate-pop {
+  animation: pop 0.38s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+
+/* Strokes that draw themselves in (paths use pathLength="1"). */
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+.animate-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: draw 0.32s 0.06s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+/* A soft ring that spreads out from something you just completed. */
+@keyframes ring {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+.animate-ring {
+  animation: ring 0.55s ease-out;
+}
+
+/* Tappable cards and rows sink a touch while pressed. */
+.press {
+  transition:
+    transform 0.16s ease-out,
+    background-color 0.16s ease-out;
+}
+.press:active {
+  transform: scale(0.98);
+}
+
+/* Loading placeholders. */
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 55%, var(--surface)) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+
+/* Theme changes cross-fade (View Transitions, where supported). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.35s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

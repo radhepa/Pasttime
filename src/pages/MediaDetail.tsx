@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { addLog, db, logEpisode, maybeCompleteShow, rateViaLogs, startOver, syncEpisodes, touchMedia } from '../db';
 import type { Episode, LogEntry, Media, Status } from '../types';
@@ -9,12 +10,13 @@ import { currentPage, ratingFor } from '../lib/stats';
 import { getCategory, statusLabel, unitPlural, verb } from '../lib/categories';
 import { useSettings } from '../lib/settings';
 import { SOURCE_LABEL } from '../lib/search';
-import { Button, catColor, Cover, Icon, StarDisplay, StarInput, TypeBadge } from '../components/ui';
+import { Bar, Button, catColor, Cover, Icon, StarDisplay, StarInput, TypeBadge } from '../components/ui';
 import { LogEditor } from '../components/LogEditor';
 import { BulkWatchSheet, FinishSheet, OnceSheet, ProgressSheet, RatePrompt, SessionSheet } from '../components/LogSheets';
 import { ListsSheet } from '../components/ListsSheet';
-import { startTimer, useTimer } from '../lib/timer';
+import { elapsed, startTimer, useTimer } from '../lib/timer';
 import { toast } from '../lib/toast';
+import { celebrate, haptic } from '../lib/feedback';
 
 export default function MediaDetail() {
   const { id } = useParams();
@@ -70,6 +72,8 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const timing = timer?.mediaId === media.id;
   const canTime = cat.track === 'progress' || cat.track === 'sessions';
   const begin = () => {
+    if (timer && timer.mediaId !== media.id && !confirm(`A timer for ${timer.title} is running (${elapsed(timer.startedAt)}). Stop it without logging and start one for ${media.title}?`))
+      return;
     startTimer({ mediaId: media.id, title: media.title, kind: cat.track === 'progress' ? 'progress' : 'session', type: media.type });
     toast('Timer started. Stop it when you’re done.');
   };
@@ -280,11 +284,14 @@ function describe(l: LogEntry, media: Media, eps: Map<string, Episode>) {
 /** Your own review / notes, saved when you leave the box. */
 function NotesCard({ media }: { media: Media }) {
   const [text, setText] = useState(media.notes ?? '');
+  const [focused, setFocused] = useState(false);
+  // Notes that changed elsewhere (another device) show up here unless you're typing.
   useEffect(() => {
-    setText(media.notes ?? '');
-  }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!focused) setText(media.notes ?? '');
+  }, [media.id, media.notes]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = () => {
-    if ((media.notes ?? '') !== text) touchMedia(media.id, { notes: text.trim() || undefined });
+    setFocused(false);
+    if ((media.notes ?? '') !== text && (media.notes ?? '') !== text.trim()) touchMedia(media.id, { notes: text.trim() || undefined });
   };
   return (
     <section className="mt-8">
@@ -292,6 +299,7 @@ function NotesCard({ media }: { media: Media }) {
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onFocus={() => setFocused(true)}
         onBlur={save}
         placeholder={`What did you think of ${media.title}? Only you can see this.`}
         className="field min-h-24 rounded-2xl! leading-relaxed"
@@ -303,18 +311,19 @@ function NotesCard({ media }: { media: Media }) {
 function ProgressPanel({ media, page, minutes, onLog, onFinish }: { media: Media; page?: number; minutes: number; onLog: () => void; onFinish: () => void }) {
   const cat = getCategory(media.type);
   const unit = (cat.unit ?? 'part').replace(/^./, (x) => x.toUpperCase());
-  const pct = page != null && media.totalPages ? Math.min(100, Math.round((page / media.totalPages) * 100)) : undefined;
+  const done = media.status === 'completed';
+  const pct = done ? 100 : page != null && media.totalPages ? Math.min(100, Math.round((page / media.totalPages) * 100)) : undefined;
   return (
     <div className="rounded-3xl bg-surface p-4">
       <div className="mb-2 flex items-baseline justify-between text-sm">
-        <span className="font-semibold">{page != null ? `${unit} ${page}${media.totalPages ? ` of ${media.totalPages}` : ''}` : 'Not started'}</span>
+        <span className="font-semibold">
+          {done ? 'Finished' : page != null ? `${unit} ${page}${media.totalPages ? ` of ${media.totalPages}` : ''}` : 'Not started'}
+        </span>
         <span className="text-muted">
           {[minutes ? formatMinutes(minutes) : undefined, pct !== undefined ? `${pct}%` : undefined].filter(Boolean).join(' · ')}
         </span>
       </div>
-      <div className="mb-4 h-2 overflow-hidden rounded-full bg-surface-2">
-        <div className="h-full rounded-full transition-all" style={{ width: `${pct ?? (media.status === 'completed' ? 100 : 0)}%`, background: catColor(media.type) }} />
-      </div>
+      <Bar className="mb-4 h-2" pct={pct ?? 0} color={catColor(media.type)} />
       {!media.totalPages && (
         <p className="mb-3 text-xs text-muted">
           Add the total number of {unitPlural(cat)} with <span className="font-semibold">Edit</span> to see a progress bar.
@@ -357,12 +366,25 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
   const [bulk, setBulk] = useState<{ title: string; eps: Episode[] }>();
   const [refreshing, setRefreshing] = useState<string>();
 
+  // Episodes ticked off just now get the pop-and-draw check; ones already watched just show it.
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
+  const caughtUpAfter = (ids: string[]) => episodes.every((e) => !aired(e) || watched.has(e.id) || ids.includes(e.id));
+
+  const busy = useRef(new Set<string>());
   const markWatched = async (ep: Episode) => {
+    if (busy.current.has(ep.id)) return; // a quick double tap logs it once
+    busy.current.add(ep.id);
+    setTimeout(() => busy.current.delete(ep.id), 800);
+    haptic();
+    setFresh((f) => new Set(f).add(ep.id));
+    const done = caughtUpAfter([ep.id]);
     const log = await logEpisode(media, ep);
+    if (done) celebrate();
     if (settings.promptRating) setPrompt({ log, ep });
   };
 
   const unmark = async (ep: Episode) => {
+    haptic();
     const removed = await db.logs.where('episodeId').equals(ep.id).toArray();
     await db.logs.bulkDelete(removed.map((l) => l.id));
     toast(`${episodeCode(ep.season, ep.number)} marked unwatched`, { label: 'Undo', run: () => db.logs.bulkPut(removed) });
@@ -372,11 +394,22 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
   const bulkMark = async (eps: Episode[], date: string | null) => {
     const base = Date.now();
     const todo = eps.filter((e) => !watched.has(e.id));
+    setFresh((f) => new Set([...f, ...todo.map((e) => e.id)]));
     for (const [i, e] of todo.entries()) {
       await addLog({ mediaId: media.id, kind: 'episode', date, episodeId: e.id, season: e.season, number: e.number, at: base + i });
     }
     await maybeCompleteShow(media.id);
+    if (caughtUpAfter(todo.map((e) => e.id))) celebrate();
+    else haptic('success');
   };
+
+  const canRefresh = (media.source === 'tvmaze' || media.source === 'anilist') && !!media.sourceId;
+  // Airing shows (and ones with no episode list yet) quietly check for new episodes twice a day when you open them.
+  useEffect(() => {
+    const airing = !['Ended', 'FINISHED', 'CANCELLED'].includes(media.airStatus ?? '');
+    const stale = Date.now() - (media.episodesCheckedAt ?? 0) > 12 * 3600_000;
+    if (canRefresh && navigator.onLine && stale && (airing || episodes.length === 0)) syncEpisodes(media).catch(() => undefined);
+  }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = async () => {
     setRefreshing('Checking…');
@@ -384,7 +417,7 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
       const added = await syncEpisodes(media);
       setRefreshing(added > 0 ? `${added} new episode${added > 1 ? 's' : ''}` : 'Up to date');
     } catch {
-      setRefreshing("Couldn't reach TVmaze");
+      setRefreshing(`Couldn't reach ${media.source === 'anilist' ? 'AniList' : 'TVmaze'}`);
     }
     setTimeout(() => setRefreshing(undefined), 2500);
   };
@@ -401,17 +434,21 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
               </span>
               <span className="text-muted">{airedCount ? Math.round((seenCount / airedCount) * 100) : 0}%</span>
             </div>
-            <div className="mb-4 h-2 overflow-hidden rounded-full bg-surface-2">
-              <div className="h-full rounded-full transition-all"  style={{ width: `${airedCount ? (seenCount / airedCount) * 100 : 0}%`, background: catColor(media.type) }} />
-            </div>
+            <Bar className="mb-4 h-2" pct={airedCount ? (seenCount / airedCount) * 100 : 0} color={catColor(media.type)} />
           </>
         )}
         {next ? (
           <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
+            <motion.div
+              key={next.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: 'spring', damping: 26, stiffness: 380 }}
+              className="min-w-0 flex-1"
+            >
               <p className="text-xs font-semibold uppercase tracking-wide text-accent">Up next · {episodeCode(next.season, next.number)}</p>
               <p className="truncate font-semibold">{next.title}</p>
-            </div>
+            </motion.div>
             <Button onClick={() => markWatched(next)}>
               <Icon name="check" /> Watched
             </Button>
@@ -421,7 +458,9 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
         ) : (
           <p className="text-sm text-muted">
             No episode list for this show.{' '}
-            {media.source === 'tvmaze' ? 'Try refreshing below.' : 'Shows added by hand don’t have episodes yet — search for it to get the full list.'}
+            {canRefresh
+              ? 'Try “Check for new episodes” below.'
+              : 'Shows added by hand don’t have episodes. Add a count with Edit, or search for the show to get its full list.'}
           </p>
         )}
       </div>
@@ -429,9 +468,9 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
       {/* Seasons */}
       <div className="mt-6 mb-2 flex items-center justify-between">
         <h2 className="eyebrow">Seasons</h2>
-        {media.source === 'tvmaze' && (
-          <button onClick={refresh} className="flex items-center gap-1 text-xs font-semibold text-accent">
-            <Icon name="refresh" className="size-3.5" />
+        {canRefresh && (
+          <button onClick={refresh} disabled={!!refreshing} className="flex items-center gap-1 text-xs font-semibold text-accent">
+            <Icon name="refresh" className={`size-3.5 ${refreshing === 'Checking…' ? 'animate-spin' : ''}`} />
             {refreshing ?? 'Check for new episodes'}
           </button>
         )}
@@ -444,7 +483,7 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
           const airedEps = eps.filter(aired);
           return (
             <div key={s} className="overflow-hidden rounded-3xl bg-surface">
-              <button onClick={() => setOpen(isOpen ? undefined : s)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+              <button onClick={() => setOpen(isOpen ? undefined : s)} className="flex w-full items-center gap-3 px-4 py-3 text-left" aria-expanded={isOpen}>
                 <span className="flex-1">
                   <span className="block font-semibold">{s === 0 ? 'Specials' : `Season ${s}`}</span>
                   <span className="text-xs text-muted">
@@ -458,10 +497,18 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                   </span>
                 )}
                 {seen === eps.length && <Icon name="check" className="size-4 text-accent" strokeWidth={2.6} />}
-                <Icon name="down" className={`size-4 text-muted transition ${isOpen ? 'rotate-180' : ''}`} />
+                <Icon name="down" className={`size-4 text-muted transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
               </button>
+              <AnimatePresence initial={false}>
               {isOpen && (
-                <div className="border-t border-line">
+                <motion.div
+                  key="eps"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ type: 'spring', damping: 36, stiffness: 300 }}
+                  className="overflow-hidden border-t border-line"
+                >
                   {airedEps.some((e) => !watched.has(e.id)) && (
                     <button
                       onClick={() => setBulk({ title: `Mark ${s === 0 ? 'specials' : `season ${s}`} watched`, eps: airedEps })}
@@ -479,11 +526,15 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                           disabled={!isAired}
                           onClick={() => (isSeen ? unmark(e) : markWatched(e))}
                           aria-label={isSeen ? 'Mark unwatched' : 'Mark watched'}
-                          className={`flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition ${
-                            isSeen ? 'border-accent bg-accent text-on-accent' : 'border-line text-transparent hover:border-accent'
-                          }`}
+                          className={`flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-200 active:scale-90 ${
+                            isSeen ? 'border-accent bg-accent text-on-accent' : 'border-line hover:border-accent'
+                          } ${isSeen && fresh.has(e.id) ? 'animate-ring' : ''}`}
                         >
-                          <Icon name="check" className="size-4" strokeWidth={3} />
+                          {isSeen && (
+                            <span className={fresh.has(e.id) ? 'animate-pop' : undefined}>
+                              <Icon name="check" className="size-4" strokeWidth={3} draw={fresh.has(e.id)} />
+                            </span>
+                          )}
                         </button>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">
@@ -515,8 +566,9 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                       </div>
                     );
                   })}
-                </div>
+                </motion.div>
               )}
+              </AnimatePresence>
             </div>
           );
         })}

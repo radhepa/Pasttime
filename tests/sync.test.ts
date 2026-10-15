@@ -234,7 +234,7 @@ describe('sync between a desktop and a phone', () => {
     await app.sync.syncNow();
 
     app = await boot(theirs);
-    await app.sync.signIn('other@example.com', 'right');
+    expect(await app.sync.signIn('other@example.com', 'right')).toEqual({ ok: true });
     await app.sync.syncNow();
     expect(await app.db.media.count()).toBe(0);
 
@@ -242,9 +242,92 @@ describe('sync between a desktop and a phone', () => {
     await app.sync.signOut();
     expect(mine.client.signOutCalls).toEqual([{ scope: 'local' }]);
     expect(await app.db.media.count()).toBe(1); // what's on the device stays
-    expect(localStorage.getItem('pastime.sync.account')).toBeNull();
-    // Local edits after signing out aren't queued for anyone.
-    await app.db.media.put(media('m9', 'Offline only'));
-    expect(localStorage.getItem('pastime.sync.pending')).toBeNull();
+  });
+
+  it('a deletion made while signed out reaches the account after signing back in', async () => {
+    const desktop = newDevice();
+    let app = await boot(desktop);
+    await app.db.media.bulkPut([media('m1', 'Keep'), media('m2', 'Delete me')]);
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+    await app.sync.signOut();
+
+    await app.db.media.delete('m2');
+    const quiet = server.clock;
+    await app.sync.syncNow(); // signed out: nothing is sent
+    expect(server.clock).toBe(quiet);
+
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+    expect(server.live('user-me', 'media').map((r) => r.id)).toEqual(['m1']);
+    expect(await app.db.media.count()).toBe(1);
+  });
+
+  it("asks before mixing another account's library into this one", async () => {
+    const shared = newDevice();
+    let app = await boot(shared);
+    await app.db.media.put(media('m1', 'Mine'));
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+    await app.sync.signOut();
+
+    // Someone else signs in on the same device.
+    const result = await app.sync.signIn('other@example.com', 'right');
+    expect(result).toEqual({ ok: false, libraryOf: 'me@example.com' });
+    await app.sync.syncNow();
+    expect(server.live('user-other', 'media')).toHaveLength(0); // nothing merged yet
+
+    await app.sync.finishAccountSwitch('replace');
+    await app.sync.syncNow();
+    expect(await app.db.media.count()).toBe(0); // device cleared...
+    expect(server.live('user-me', 'media')).toHaveLength(1); // ...but nothing deleted from the first account
+    expect(server.live('user-other', 'media')).toHaveLength(0);
+  });
+
+  it('folds a title both devices added before syncing into one', async () => {
+    const desktop = newDevice();
+    const phone = newDevice();
+    const show = (id: string) => ({ ...media(id, 'Severance'), type: 'show', source: 'tvmaze', sourceId: '44933' });
+
+    let app = await boot(desktop);
+    await app.db.media.put(show('desk-show'));
+    await app.db.episodes.put({ id: 'desk-e1', mediaId: 'desk-show', season: 1, number: 1 });
+    await app.db.logs.put({ ...log('desk-l1', 'desk-show'), kind: 'episode', episodeId: 'desk-e1', season: 1, number: 1 });
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+
+    app = await boot(phone);
+    await app.db.media.put(show('phone-show'));
+    await app.db.episodes.bulkPut([
+      { id: 'phone-e1', mediaId: 'phone-show', season: 1, number: 1 },
+      { id: 'phone-e2', mediaId: 'phone-show', season: 1, number: 2 },
+    ]);
+    await app.db.logs.bulkPut([
+      { ...log('phone-l1', 'phone-show'), kind: 'episode', episodeId: 'phone-e1', season: 1, number: 1 }, // same viewing as the desktop's
+      { ...log('phone-l2', 'phone-show'), kind: 'episode', episodeId: 'phone-e2', season: 1, number: 2, date: '2026-10-15' },
+    ]);
+    await app.db.lists.put({ id: 'L1', name: 'Faves', items: ['phone-show'], createdAt: 1, updatedAt: 1 });
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+
+    expect((await app.db.media.toArray()).map((m) => m.id)).toEqual(['desk-show']);
+    const logs = await app.db.logs.toArray();
+    expect(logs.map((l) => l.episodeId).sort()).toEqual(['desk-e1', 'phone-e2']); // E1 once, E2 moved over
+    expect(logs.every((l) => l.mediaId === 'desk-show')).toBe(true);
+    expect((await app.db.lists.get('L1'))?.items).toEqual(['desk-show']);
+    expect(server.live('user-me', 'media')).toHaveLength(1);
+    expect(server.live('user-me', 'logs')).toHaveLength(2);
+  });
+
+  it('does not re-upload records that did not change', async () => {
+    const desktop = newDevice();
+    const app = await boot(desktop);
+    await app.db.media.put(media('m1', 'Same'));
+    await app.sync.signIn('me@example.com', 'right');
+    await app.sync.syncNow();
+    const quiet = server.clock;
+    await app.db.media.put(media('m1', 'Same')); // identical
+    await app.sync.syncNow();
+    expect(server.clock).toBe(quiet);
   });
 });

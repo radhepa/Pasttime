@@ -1,6 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { animate, motion, useReducedMotion } from 'motion/react';
 import { db } from '../db';
 import type { Episode, LogEntry, Media } from '../types';
 import { addDays, dayLabel, parseKey, todayKey } from '../lib/dates';
@@ -8,7 +9,7 @@ import { getCategory, useCategories, verb } from '../lib/categories';
 import { ratingFor } from '../lib/stats';
 import { fmtRating } from '../lib/ratings';
 import { setSettings, useSettings } from '../lib/settings';
-import { Button, catColor, Cover, Empty, Field, Sheet, StarDisplay } from '../components/ui';
+import { Bar, Button, catColor, Cover, Empty, Field, Sheet, StarDisplay } from '../components/ui';
 
 /* ---------------- Number crunching ---------------- */
 
@@ -175,7 +176,30 @@ function Card({ title, children, action }: { title: string; children: ReactNode;
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+/** A number that counts up to its value (and glides between values when it changes). */
+function CountUp({ value, format = (n) => Math.round(n).toLocaleString() }: { value: number; format?: (n: number) => string }) {
+  const reduce = useReducedMotion();
+  const [shown, setShown] = useState(reduce ? value : 0);
+  const from = useRef(0);
+  useEffect(() => {
+    if (reduce) {
+      setShown(value);
+      return;
+    }
+    const controls = animate(from.current, value, {
+      duration: 0.9,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => {
+        from.current = v;
+        setShown(v);
+      },
+    });
+    return () => controls.stop();
+  }, [value, reduce]);
+  return <>{format(shown)}</>;
+}
+
+function Tile({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
   return (
     <div className="rounded-3xl bg-surface p-3.5">
       <p className="text-xs text-muted">{label}</p>
@@ -259,10 +283,13 @@ function Columns({ data }: { data: { key: string; label: string; minutes: number
               {/* Hit area: the whole band, not just the painted column */}
               <rect x={pad.l + band * i} y={pad.t} width={band} height={H - pad.t - pad.b} fill="transparent" />
               {h > 0 && (
-                <path
+                <motion.path
                   d={`M${x0},${base} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x0 + bw - r} Q${x0 + bw},${top} ${x0 + bw},${top + r} V${base} Z`}
                   fill="var(--accent)"
-                  opacity={hover === undefined || hover === i ? 1 : 0.55}
+                  initial={{ scaleY: 0 }}
+                  animate={{ scaleY: 1, opacity: hover === undefined || hover === i ? 1 : 0.55 }}
+                  transition={{ scaleY: { type: 'spring', damping: 22, stiffness: 160, delay: 0.1 + i * 0.03 }, opacity: { duration: 0.15 } }}
+                  style={{ originY: 1 }}
                 />
               )}
               <text x={cx} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--muted)">
@@ -309,7 +336,7 @@ function Heatmap({ perDay, range }: { perDay: Map<string, number>; range: string
           {days.map((d, i) => {
             const n = perDay.get(d) ?? 0;
             return (
-              <rect key={d} x={Math.floor(i / 7) * 13} y={(i % 7) * 13} width={11} height={11} rx={2} fill={heat(n)} opacity={d < startRaw ? 0.25 : 1}>
+              <rect key={d} x={Math.floor(i / 7) * 13} y={(i % 7) * 13} width={11} height={11} rx={2} fill={heat(n)} opacity={d < startRaw || (range !== 'all' && !d.startsWith(range)) ? 0.25 : 1}>
                 <title>{`${dayLabel(d)}: ${n} ${n === 1 ? 'entry' : 'entries'}`}</title>
               </rect>
             );
@@ -334,7 +361,8 @@ function GoalsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Sheet open={open} onClose={onClose} title="Yearly goals">
       <p className="mb-4 text-sm text-muted">How many titles do you want to finish this year? Leave a category empty for no goal.</p>
       <div className="grid grid-cols-2 gap-3">
-        {visible.map((c) => (
+        {/* Visible categories, plus any hidden or deleted one that still has a goal (so it can be cleared). */}
+        {[...visible, ...Object.keys(goals).filter((id) => goals[id] > 0 && !visible.some((c) => c.id === id)).map(getCategory)].map((c) => (
           <Field key={c.id} label={`${c.emoji} ${c.plural}`}>
             <input
               type="number"
@@ -385,9 +413,12 @@ export default function Stats() {
           <button
             key={y}
             onClick={() => setRange(y)}
-            className={`shrink-0 rounded-lg px-3 py-1 text-sm font-medium ${range === y ? 'bg-surface text-ink shadow-sm ring-1 ring-line' : 'text-muted'}`}
+            className={`relative shrink-0 rounded-lg px-3 py-1 text-sm font-medium transition-colors ${range === y ? 'text-ink' : 'text-muted'}`}
           >
-            {y === 'all' ? 'All time' : y}
+            {range === y && (
+              <motion.span layoutId="stats-range" className="absolute inset-0 rounded-lg bg-surface shadow-sm ring-1 ring-line" transition={{ type: 'spring', damping: 30, stiffness: 420 }} />
+            )}
+            <span className="relative">{y === 'all' ? 'All time' : y}</span>
           </button>
         ))}
       </div>
@@ -399,17 +430,25 @@ export default function Stats() {
           {/* Hero figure */}
           <div className="rounded-3xl bg-surface p-5">
             <p className="text-sm text-muted">Time spent in {rangeLabel}</p>
-            <p className="text-5xl font-semibold tracking-tight">
-              {hours(s.totalMinutes)} <span className="text-2xl text-muted">hours</span>
+            <p className="text-5xl font-semibold tracking-tight tabular-nums">
+              <CountUp value={s.totalMinutes} format={hours} /> <span className="text-2xl text-muted">hours</span>
             </p>
             {s.estimated && <p className="mt-1 text-xs text-muted">Includes estimates where you didn't log minutes (e.g. a typical movie length).</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Tile label="Titles finished" value={compact(finishedTotal)} />
-            <Tile label="Episodes watched" value={compact(s.episodes)} />
-            <Tile label="Days active" value={compact(s.daysActive)} sub={`Longest streak ${s.longestStreak} ${s.longestStreak === 1 ? 'day' : 'days'}`} />
-            <Tile label="Average rating" value={s.avgRating ? fmtRating(s.avgRating) : '—'} sub={`${s.ratingCounts.reduce((a, b) => a + b, 0)} ratings`} />
+            <Tile label="Titles finished" value={<CountUp value={finishedTotal} format={(n) => compact(Math.round(n))} />} />
+            <Tile label="Episodes watched" value={<CountUp value={s.episodes} format={(n) => compact(Math.round(n))} />} />
+            <Tile
+              label="Days active"
+              value={<CountUp value={s.daysActive} format={(n) => compact(Math.round(n))} />}
+              sub={`Longest streak ${s.longestStreak} ${s.longestStreak === 1 ? 'day' : 'days'}`}
+            />
+            <Tile
+              label="Average rating"
+              value={s.avgRating ? <CountUp value={s.avgRating} format={(n) => fmtRating(n)} /> : '—'}
+              sub={`${s.ratingCounts.reduce((a, b) => a + b, 0)} ratings`}
+            />
           </div>
 
           {range === thisYear && (
@@ -438,9 +477,7 @@ export default function Stats() {
                             <span className="font-semibold text-ink">{done}</span> / {goal}
                           </span>
                         </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-surface-2">
-                          <div className="h-full rounded-full" style={{ width: `${Math.min(100, (done / goal) * 100)}%`, background: catColor(id) }} />
-                        </div>
+                        <Bar className="h-2" pct={(done / goal) * 100} color={catColor(id)} />
                       </div>
                     );
                   })}
@@ -469,9 +506,7 @@ export default function Stats() {
                         {s.finishedBy.get(c.id) ? ` · ${s.finishedBy.get(c.id)} ${verb(cat).past.toLowerCase()}` : ''}
                       </span>
                     </div>
-                    <div className="h-2 rounded-full bg-surface-2">
-                      <div className="h-full rounded-full" style={{ width: `${Math.max(2, (c.minutes / maxCat) * 100)}%`, background: catColor(c.id) }} />
-                    </div>
+                    <Bar className="h-2" pct={Math.max(2, (c.minutes / maxCat) * 100)} color={catColor(c.id)} />
                   </div>
                 );
               })}
@@ -489,7 +524,13 @@ export default function Stats() {
                   <div key={n} className="flex items-center gap-2 text-sm">
                     <span className="w-8 shrink-0 tabular-nums text-muted">{n}★</span>
                     <div className="h-3 flex-1 rounded-r bg-surface-2">
-                      <div className="h-full rounded-r" style={{ width: `${(s.ratingCounts[n - 1] / maxRating) * 100}%`, background: 'var(--star)' }} />
+                      <motion.div
+                        className="h-full rounded-r"
+                        style={{ background: 'var(--star)' }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(s.ratingCounts[n - 1] / maxRating) * 100}%` }}
+                        transition={{ type: 'spring', damping: 30, stiffness: 140, delay: (5 - n) * 0.05 }}
+                      />
                     </div>
                     <span className="w-8 shrink-0 text-right tabular-nums">{s.ratingCounts[n - 1]}</span>
                   </div>

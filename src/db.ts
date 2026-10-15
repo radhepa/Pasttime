@@ -1,8 +1,10 @@
 import Dexie, { type Table } from 'dexie';
 import type { Episode, LogEntry, Media, MediaList, SearchResult } from './types';
 import type { CategoryRow } from './lib/categories';
-import { fetchAnilistEpisodeCount, fetchBookDescription, fetchEpisodes } from './lib/search';
+import { fetchAnilistEpisodeCount, fetchBookDescription, fetchEpisodes, fetchShowStatus } from './lib/search';
+import { cancelTimer, getTimer } from './lib/timer';
 import { todayKey } from './lib/dates';
+import { getSettings, setSettings, type Settings } from './lib/settings';
 
 class PastimeDB extends Dexie {
   media!: Table<Media, string>;
@@ -51,8 +53,19 @@ export async function findBySource(source: string, sourceId: string) {
   return db.media.where('[source+sourceId]').equals([source, sourceId]).first();
 }
 
-/** Adds a search result to the library (or returns the existing entry). */
-export async function addFromResult(r: SearchResult): Promise<string> {
+const adding = new Map<string, Promise<string>>();
+
+/** Adds a search result to the library (or returns the existing entry). A double tap adds it once. */
+export function addFromResult(r: SearchResult): Promise<string> {
+  const key = `${r.source}:${r.sourceId}`;
+  const pending = adding.get(key);
+  if (pending) return pending;
+  const job = addNew(r).finally(() => adding.delete(key));
+  adding.set(key, job);
+  return job;
+}
+
+async function addNew(r: SearchResult): Promise<string> {
   const existing = await findBySource(r.source, r.sourceId);
   if (existing) return existing.id;
   const now = Date.now();
@@ -96,14 +109,22 @@ async function fillEpisodes(mediaId: string, count: number) {
   return add.length;
 }
 
-/** Pulls the episode list from the database. Keeps existing episode ids so your logs stay attached. */
+/**
+ * Pulls the episode list (and whether the show has ended) from its database. Keeps existing episode ids
+ * so your logs stay attached. A show that has now ended and is fully watched moves to "completed".
+ */
 export async function syncEpisodes(media: Media) {
+  const checked = { episodesCheckedAt: Date.now() };
   if (media.source === 'anilist' && media.sourceId) {
-    const count = await fetchAnilistEpisodeCount(media.sourceId);
-    return count ? fillEpisodes(media.id, count) : 0;
+    const { count, status } = await fetchAnilistEpisodeCount(media.sourceId);
+    const added = count ? await fillEpisodes(media.id, count) : 0;
+    await db.media.update(media.id, status && status !== media.airStatus ? { ...checked, airStatus: status, updatedAt: Date.now() } : checked);
+    await maybeCompleteShow(media.id);
+    return added;
   }
   if (media.source !== 'tvmaze' || !media.sourceId) return 0;
-  const fresh = await fetchEpisodes(media.sourceId);
+  const [fresh, status] = await Promise.all([fetchEpisodes(media.sourceId), fetchShowStatus(media.sourceId).catch(() => undefined)]);
+  await db.media.update(media.id, status && status !== media.airStatus ? { ...checked, airStatus: status, updatedAt: Date.now() } : checked);
   const existing = await db.episodes.where('mediaId').equals(media.id).toArray();
   const byKey = new Map(existing.map((e) => [`${e.season}x${e.number}`, e]));
   const rows: Episode[] = fresh.map((e) => ({
@@ -112,10 +133,12 @@ export async function syncEpisodes(media: Media) {
     mediaId: media.id,
   }));
   await db.episodes.bulkPut(rows);
+  await maybeCompleteShow(media.id);
   return rows.length - existing.length;
 }
 
 export async function deleteMedia(id: string) {
+  if (getTimer()?.mediaId === id) cancelTimer();
   await db.transaction('rw', [db.media, db.episodes, db.logs, db.lists], async () => {
     const lists = (await db.lists.toArray()).filter((l) => l.items.includes(id));
     await db.lists.bulkPut(lists.map((l) => ({ ...l, items: l.items.filter((x) => x !== id) })));
@@ -174,6 +197,12 @@ export async function rateViaLogs(media: Media, rating: number | undefined, ep?:
   const logs = (await db.logs.where('mediaId').equals(media.id).toArray())
     .filter((l) => (ep ? l.episodeId === ep.id : l.kind === 'once'))
     .sort((a, b) => b.at - a.at);
+  if (rating === undefined) {
+    // Clearing: the shown rating may come from an older viewing, so clear every rated one.
+    const rated = logs.filter((l) => l.rating);
+    if (rated.length) await db.logs.bulkPut(rated.map((l) => ({ ...l, rating: undefined, updatedAt: Date.now() })));
+    return;
+  }
   if (logs[0]) {
     await db.logs.update(logs[0].id, { rating, updatedAt: Date.now() });
   } else if (rating) {
@@ -195,12 +224,27 @@ export async function exportAll() {
     logs: await db.logs.toArray(),
     lists: await db.lists.toArray(),
     categories: await db.categories.toArray(),
+    settings: (() => {
+      const { lastBackupAt: _, ...rest } = getSettings();
+      return rest;
+    })(),
   };
 }
 
 const OLD_KINDS: Record<string, LogEntry['kind']> = { movie: 'once', reading: 'progress', play: 'session' };
 
-export async function importAll(data: { media: Media[]; episodes: Episode[]; logs: LogEntry[]; lists?: MediaList[]; categories?: CategoryRow[] }) {
+export async function importAll(data: {
+  media?: Media[];
+  episodes?: Episode[];
+  logs?: LogEntry[];
+  lists?: MediaList[];
+  categories?: CategoryRow[];
+  settings?: Partial<Settings>;
+}) {
+  if (data.settings && typeof data.settings === 'object') {
+    const { lastBackupAt: _, ...rest } = data.settings;
+    setSettings(rest);
+  }
   await db.transaction('rw', [db.media, db.episodes, db.logs, db.lists, db.categories], async () => {
     await db.media.bulkPut(data.media ?? []);
     await db.episodes.bulkPut(data.episodes ?? []);
