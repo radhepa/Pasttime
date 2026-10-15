@@ -13,6 +13,11 @@ export interface Settings {
   showRating: 'seasons' | 'episodes';
   /** Ask for a star rating right after you mark an episode or movie watched. */
   promptRating: boolean;
+  /**
+   * How ratings look. Every rating is stored on a 0.5–5 scale in half steps, so switching never loses anything:
+   * "five" = 5 stars with half stars, "ten" = 10 stars (a stored 4.5 shows as 9/10).
+   */
+  ratingScale: 'five' | 'ten';
   theme: 'system' | 'light' | 'dark';
   /** Color theme: Mist (sage), Dusk (slate blue), Clay (warm sand) or Lilac. */
   palette: Palette;
@@ -38,6 +43,7 @@ const DEFAULTS: Settings = {
   rawgKey: '',
   showRating: 'seasons',
   promptRating: true,
+  ratingScale: 'five',
   theme: 'system',
   palette: 'mist',
   goals: {},

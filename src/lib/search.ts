@@ -43,14 +43,20 @@ interface TvmazeShow {
   image?: { medium?: string; original?: string } | null;
   network?: { name: string } | null;
   webChannel?: { name: string } | null;
+  type?: string;
+  language?: string | null;
 }
 
-async function searchShows(q: string, type: string): Promise<SearchResult[]> {
+/** TVmaze lists anime as ordinary shows: Japanese animation. */
+const isAnime = (s: TvmazeShow) => s.type === 'Animation' && s.language === 'Japanese';
+
+/** `animeType`: where anime found here should go instead (so an anime searched under Shows still lands with your anime). */
+async function searchShows(q: string, type: string, animeType?: string): Promise<SearchResult[]> {
   const rows = await getJson<{ show: TvmazeShow }[]>(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`);
   return rows.map(({ show }) => {
     const channel = show.network?.name ?? show.webChannel?.name;
     return {
-      type,
+      type: animeType && isAnime(show) ? animeType : type,
       source: 'tvmaze',
       sourceId: String(show.id),
       title: show.name,
@@ -214,6 +220,7 @@ interface AniMedia {
   coverImage?: { large?: string };
   format?: string;
   status?: string;
+  duration?: number | null;
   genres?: string[];
   description?: string;
   studios?: { nodes: { name: string }[] };
@@ -235,7 +242,7 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
   else if (kind === 'MANGA') vars.nf = 'NOVEL'; // manga search shouldn't drown in light novels
   const data = await anilist<{ Page: { media: AniMedia[] } }>(
     `query($s:String,$t:MediaType,$f:MediaFormat,$nf:MediaFormat){Page(perPage:15){media(search:$s,type:$t,format:$f,format_not:$nf,isAdult:false){
-      id title{romaji english} episodes nextAiringEpisode{episode} chapters volumes startDate{year} coverImage{large} format status genres description(asHtml:false)
+      id title{romaji english} episodes nextAiringEpisode{episode} chapters volumes startDate{year} coverImage{large} format status duration genres description(asHtml:false)
       studios(isMain:true){nodes{name}} staff(perPage:2){nodes{name{full}}}}}}`,
     vars,
   );
@@ -243,6 +250,8 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
     const title = m.title.english || m.title.romaji || 'Untitled';
     const units = format === 'NOVEL' ? m.volumes : m.chapters;
     const creators = kind === 'ANIME' ? m.studios?.nodes.map((s) => s.name) : m.staff?.nodes.map((s) => s.name.full);
+    // Films and one-episode specials are watched in one go: tracked like a movie, not as an episode list.
+    const oneShot = kind === 'ANIME' && (m.format === 'MOVIE' || (m.episodes === 1 && m.status === 'FINISHED'));
     return {
       type,
       source: 'anilist',
@@ -255,12 +264,15 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
       creators: creators?.length ? creators : undefined,
       airStatus: m.status,
       // Airing shows only get the episodes that are out so far (AniList's total includes future ones).
-      episodeCount: kind === 'ANIME' ? airedAnimeEpisodes(m) || undefined : undefined,
+      episodeCount: kind === 'ANIME' && !oneShot ? airedAnimeEpisodes(m) || undefined : undefined,
+      oneShot: oneShot || undefined,
+      runtime: oneShot && m.duration ? m.duration : undefined,
       totalPages: kind === 'MANGA' ? (units ?? undefined) : undefined,
       subtitle: [
         m.startDate?.year,
-        m.format?.replace('_', ' '),
-        kind === 'ANIME' && m.episodes ? `${m.episodes} episodes` : undefined,
+        m.format && (FORMAT_LABEL[m.format] ?? m.format.replace('_', ' ')),
+        kind === 'ANIME' && oneShot && m.duration ? `${m.duration} min` : undefined,
+        kind === 'ANIME' && !oneShot && m.episodes ? `${m.episodes} episode${m.episodes === 1 ? '' : 's'}` : undefined,
         kind === 'MANGA' && units ? `${units} ${format === 'NOVEL' ? 'volumes' : 'chapters'}` : undefined,
         m.title.english && m.title.romaji && m.title.english !== m.title.romaji ? m.title.romaji : undefined,
       ]
@@ -269,6 +281,8 @@ async function searchAnilist(q: string, type: string, kind: 'ANIME' | 'MANGA', f
     };
   });
 }
+
+const FORMAT_LABEL: Record<string, string> = { TV: 'TV', TV_SHORT: 'TV short', MOVIE: 'Movie', SPECIAL: 'Special', MUSIC: 'Music video', MANGA: 'Manga', ONE_SHOT: 'One-shot', NOVEL: 'Novel' };
 
 /** Episodes out so far: up to the next one due to air, or the full count once it's finished. */
 const airedAnimeEpisodes = (m: { episodes?: number | null; nextAiringEpisode?: { episode: number } | null }) =>
@@ -393,14 +407,15 @@ async function searchRawg(q: string, key: string, type: string): Promise<SearchR
 
 /* ---------------- Entry points ---------------- */
 
-export function searchCategory(c: Category, q: string): Promise<SearchResult[]> {
+/** `animeType`: the category anime found by a show search should be filed under (when you use one). */
+export function searchCategory(c: Category, q: string, animeType?: string): Promise<SearchResult[]> {
   const { tmdbKey, rawgKey } = getSettings();
   if (c.id === 'movie' && tmdbKey) return searchTmdb(q, tmdbKey, c.id);
   if (c.id === 'game' && rawgKey) return searchRawg(q, rawgKey, c.id);
   const s = c.search;
   switch (s?.provider) {
     case 'tvmaze':
-      return searchShows(q, c.id);
+      return searchShows(q, c.id, c.id === 'show' ? animeType : undefined);
     case 'openlibrary':
       return searchBooks(q, c.id);
     case 'wikipedia':

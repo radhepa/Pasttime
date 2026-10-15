@@ -7,12 +7,12 @@ import type { Episode, LogEntry, Media, Status } from '../types';
 import { dateKey, episodeCode, formatMinutes, shortDay, todayKey } from '../lib/dates';
 import { fmtRating, showRating } from '../lib/ratings';
 import { currentPage, ratingFor } from '../lib/stats';
-import { getCategory, statusLabel, unitPlural, verb } from '../lib/categories';
+import { getCategory, statusLabel, trackOf, unitPlural, verb } from '../lib/categories';
 import { useSettings } from '../lib/settings';
 import { plainText, SOURCE_LABEL } from '../lib/search';
-import { Bar, Button, catColor, Cover, Icon, StarDisplay, StarInput, TypeBadge } from '../components/ui';
+import { Bar, Button, catColor, Cover, Icon, RatingChip, StarDisplay, StarInput, TypeBadge } from '../components/ui';
 import { LogEditor } from '../components/LogEditor';
-import { BulkWatchSheet, FinishSheet, OnceSheet, ProgressSheet, RatePrompt, SessionSheet } from '../components/LogSheets';
+import { BulkWatchSheet, FinishSheet, logOnce, ProgressSheet, RatePrompt, RateSheet, SessionSheet, undoLog } from '../components/LogSheets';
 import { ListsSheet } from '../components/ListsSheet';
 import { elapsed, restoreTimer, startTimer, useTimer, type Timer } from '../lib/timer';
 import { toast } from '../lib/toast';
@@ -46,9 +46,12 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const navigate = useNavigate();
   const settings = useSettings();
   const cat = getCategory(media.type);
+  const track = trackOf(media);
   const v = verb(cat);
   const [editing, setEditing] = useState<LogEntry>();
-  const [sheet, setSheet] = useState<'once' | 'progress' | 'session' | 'finish' | 'lists'>();
+  const [sheet, setSheet] = useState<'progress' | 'session' | 'finish' | 'lists'>();
+  /** The one-tap log just made, waiting for its rating. */
+  const [onceLog, setOnceLog] = useState<{ log: LogEntry; before: Media }>();
   const [timerMinutes, setTimerMinutes] = useState<number>();
   /** The timer that "Stop & log" just ended, so closing the sheet without saving can bring it back. */
   const [stoppedTimer, setStoppedTimer] = useState<Timer>();
@@ -81,11 +84,11 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
     setStoppedTimer(undefined);
   };
   const timing = timer?.mediaId === media.id;
-  const canTime = cat.track === 'progress' || cat.track === 'sessions';
+  const canTime = track === 'progress' || track === 'sessions';
   const begin = () => {
     if (timer && timer.mediaId !== media.id && !confirm(`A timer for ${timer.title} is running (${elapsed(timer.startedAt)}). Stop it without logging and start one for ${media.title}?`))
       return;
-    startTimer({ mediaId: media.id, title: media.title, kind: cat.track === 'progress' ? 'progress' : 'session', type: media.type });
+    startTimer({ mediaId: media.id, title: media.title, kind: track === 'progress' ? 'progress' : 'session', type: media.type });
     toast('Timer started. Stop it when you’re done.');
   };
 
@@ -95,7 +98,6 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
   const page = currentPage(logs);
   const minutes = logs.reduce((s, l) => s + (l.kind === 'session' || l.kind === 'progress' ? (l.minutes ?? 0) : 0), 0);
   const epById = new Map(episodes.map((e) => [e.id, e]));
-  const timesDone = logs.filter((l) => l.kind === 'once').length;
 
   return (
     <div>
@@ -120,7 +122,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
             {[
               media.year,
               media.creators?.join(', '),
-              media.airStatus === 'Running' || media.airStatus === 'RELEASING' ? (cat.track === 'episodes' ? 'Still airing' : 'Ongoing') : undefined,
+              media.airStatus === 'Running' || media.airStatus === 'RELEASING' ? (track === 'episodes' ? 'Still airing' : 'Ongoing') : undefined,
               media.totalPages && `${media.totalPages} ${unitPlural(cat, media.totalPages)}`,
               media.runtime && formatMinutes(media.runtime),
               media.platforms?.slice(0, 3).join(', '),
@@ -140,18 +142,14 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
             ))}
           </select>
           <div className="mt-3">
-            {cat.track === 'episodes' ? (
+            {track === 'episodes' ? (
               <div className="flex items-center gap-2">
-                <StarDisplay value={rating} size="size-5" />
+                <StarDisplay value={rating} size="size-5" wide />
                 <span className="text-lg font-bold">{rating ? fmtRating(rating) : ''}</span>
                 {!rating && <span className="text-sm text-muted">Rate episodes to build a score</span>}
               </div>
             ) : (
-              <StarInput
-                value={rating}
-                size="size-7"
-                onChange={(r) => (cat.track === 'once' ? rateViaLogs(media, r) : touchMedia(media.id, { rating: r }))}
-              />
+              <StarInput value={rating} size={28} onChange={(r) => (track === 'once' ? rateViaLogs(media, r) : touchMedia(media.id, { rating: r }))} />
             )}
           </div>
         </div>
@@ -179,7 +177,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
           <button
             onClick={async () => {
               await startOver(media);
-              toast(cat.track === 'progress' ? 'Started over from the beginning' : 'Started again');
+              toast(track === 'progress' ? 'Started over from the beginning' : 'Started again');
             }}
             className="flex shrink-0 items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-sm font-semibold"
           >
@@ -191,22 +189,22 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
 
       {/* Main actions, by how this category is tracked */}
       <div className="mt-5">
-        {cat.track === 'once' && (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => setSheet('once')}>
-              <Icon name="check" /> {timesDone ? `Log another time` : `Mark ${v.past.toLowerCase()}`}
-            </Button>
-            {timesDone > 1 && (
-              <span className="text-sm text-muted">
-                {v.past} {timesDone} times
-              </span>
-            )}
-          </div>
+        {track === 'once' && (
+          <OncePanel
+            media={media}
+            logs={logs}
+            onLog={async () => {
+              const before = media;
+              const log = await logOnce(media);
+              if (settings.promptRating) setOnceLog({ log, before });
+              else toast(`${v.past} ${media.title}`, { label: 'Undo', run: () => undoLog(log, before) });
+            }}
+          />
         )}
-        {cat.track === 'progress' && (
+        {track === 'progress' && (
           <ProgressPanel media={media} page={page} minutes={minutes} onLog={() => setSheet('progress')} onFinish={() => setSheet('finish')} />
         )}
-        {cat.track === 'sessions' && (
+        {track === 'sessions' && (
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => setSheet('session')}>
               <Icon name="plus" /> Log a session
@@ -223,7 +221,7 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
             )}
           </div>
         )}
-        {cat.track === 'episodes' && <ShowPanel media={media} logs={logs} episodes={episodes} />}
+        {track === 'episodes' && <ShowPanel media={media} logs={logs} episodes={episodes} />}
       </div>
 
       <NotesCard media={media} />
@@ -251,7 +249,13 @@ function Detail({ media, logs, episodes }: { media: Media; logs: LogEntry[]; epi
         {shortDay(dateKey(new Date(media.addedAt)))}
       </p>
 
-      <OnceSheet media={media} open={sheet === 'once'} onClose={closeSheet} />
+      <RatePrompt
+        log={onceLog?.log}
+        heading={`How was ${media.title}?`}
+        pastVerb={v.past}
+        onClose={() => setOnceLog(undefined)}
+        onUndo={() => onceLog && undoLog(onceLog.log, onceLog.before)}
+      />
       <ProgressSheet
         media={media}
         open={sheet === 'progress'}
@@ -320,6 +324,57 @@ function NotesCard({ media }: { media: Media }) {
   );
 }
 
+/** Movies, albums, anime films…: one tap and it's logged. Watching it again is one more tap. */
+function OncePanel({ media, logs, onLog }: { media: Media; logs: LogEntry[]; onLog: () => Promise<void> }) {
+  const v = verb(getCategory(media.type));
+  const times = logs.filter((l) => l.kind === 'once').sort((a, b) => b.at - a.at);
+  const last = times[0];
+  const busy = useRef(false);
+  const tap = async () => {
+    if (busy.current) return; // a double tap logs it once
+    busy.current = true;
+    haptic();
+    try {
+      await onLog();
+    } finally {
+      setTimeout(() => (busy.current = false), 900);
+    }
+  };
+  if (!last)
+    return (
+      <Button onClick={tap} className="w-full py-3.5! text-base sm:w-auto sm:px-8">
+        <Icon name="check" strokeWidth={2.5} /> {v.past}
+      </Button>
+    );
+  const when = last.date === null ? 'at some point' : last.date === todayKey() ? 'today' : shortDay(last.date);
+  return (
+    <div className="flex items-center gap-3 rounded-3xl bg-surface p-3 pl-4">
+      <motion.span
+        key={last.id}
+        initial={{ scale: 0.6, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', damping: 14, stiffness: 420 }}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
+      >
+        <Icon name="check" className="size-5" strokeWidth={2.8} draw />
+      </motion.span>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold">
+          {v.past} {when}
+        </p>
+        {times.length > 1 && (
+          <p className="text-xs text-muted">
+            {times.length} times in total
+          </p>
+        )}
+      </div>
+      <Button variant="soft" onClick={tap}>
+        <Icon name="repeat" className="size-4" /> Again
+      </Button>
+    </div>
+  );
+}
+
 function ProgressPanel({ media, page, minutes, onLog, onFinish }: { media: Media; page?: number; minutes: number; onLog: () => void; onFinish: () => void }) {
   const cat = getCategory(media.type);
   const unit = (cat.unit ?? 'part').replace(/^./, (x) => x.toUpperCase());
@@ -377,6 +432,8 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
   const [prompt, setPrompt] = useState<{ log: LogEntry; ep: Episode }>();
   const [bulk, setBulk] = useState<{ title: string; eps: Episode[] }>();
   const [refreshing, setRefreshing] = useState<string>();
+  const [rateEp, setRateEp] = useState<Episode>();
+  const [rateOpen, setRateOpen] = useState(false);
 
   // Episodes ticked off just now get the pop-and-draw check; ones already watched just show it.
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
@@ -563,7 +620,15 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
                             {e.runtime ? ` · ${e.runtime}m` : ''}
                           </p>
                         </div>
-                        {isSeen && <StarInput value={ratings.byEpisode.get(e.id)} onChange={(r) => rateViaLogs(media, r, e)} size="size-5" compact />}
+                        {isSeen && (
+                          <RatingChip
+                            value={ratings.byEpisode.get(e.id)}
+                            onClick={() => {
+                              setRateEp(e);
+                              setRateOpen(true);
+                            }}
+                          />
+                        )}
                         {!isSeen && isAired && next && e.id !== next.id && (
                           <button
                             title="Mark everything up to here watched"
@@ -594,6 +659,14 @@ function ShowPanel({ media, logs, episodes }: { media: Media; logs: LogEntry[]; 
         heading={prompt ? `How was ${episodeCode(prompt.ep.season, prompt.ep.number)}?` : ''}
         sub={prompt?.ep.title}
         onClose={() => setPrompt(undefined)}
+      />
+      <RateSheet
+        open={rateOpen}
+        heading={rateEp ? `Rate ${episodeCode(rateEp.season, rateEp.number)}` : ''}
+        sub={rateEp?.title}
+        value={rateEp ? ratings.byEpisode.get(rateEp.id) : undefined}
+        onRate={(r) => rateEp && rateViaLogs(media, r, rateEp)}
+        onClose={() => setRateOpen(false)}
       />
       <BulkWatchSheet
         open={!!bulk}

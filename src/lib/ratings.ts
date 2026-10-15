@@ -1,4 +1,5 @@
 import type { Episode, LogEntry } from '../types';
+import { getSettings, type Settings } from './settings';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : undefined);
 
@@ -41,4 +42,25 @@ export function onceRating(logs: LogEntry[]) {
     .sort((a, b) => b.at - a.at)[0]?.rating;
 }
 
-export const fmtRating = (r?: number) => (r === undefined ? '' : (Math.round(r * 10) / 10).toFixed(1));
+/*
+ * Ratings are stored from 0.5 to 5 in half steps whatever scale you pick. The 10-star scale just shows them
+ * doubled: ½★ = 1/10, 4½★ = 9/10. Averages can land anywhere in between (4.3★ = 8.6/10).
+ */
+export type RatingScale = Settings['ratingScale'];
+export const STEP = 0.5;
+export const outOf = (scale: RatingScale) => (scale === 'ten' ? 10 : 5);
+/** A stored rating in the units of the chosen scale (4.5 → 9 on the 10-star scale). */
+export const scaled = (r: number, scale: RatingScale) => (scale === 'ten' ? r * 2 : r);
+/** Snaps any number onto the stored scale: 0.5–5 in half steps. */
+export const snapRating = (r: number) => Math.min(5, Math.max(STEP, Math.round(r / STEP) * STEP));
+
+/** "4.5", "4.3" on 5 stars; "9", "8.6" on 10. */
+export function fmtRating(r?: number, scale: RatingScale = getSettings().ratingScale) {
+  if (r === undefined) return '';
+  const v = Math.round(scaled(r, scale) * 10) / 10;
+  return scale === 'ten' && Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+/** For screen readers and tooltips: "4.5 out of 5 stars". */
+export const ratingWords = (r: number | undefined, scale: RatingScale = getSettings().ratingScale) =>
+  r ? `${fmtRating(r, scale)} out of ${outOf(scale)} stars` : 'Not rated';

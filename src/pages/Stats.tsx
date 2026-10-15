@@ -5,7 +5,7 @@ import { animate, motion, useReducedMotion } from 'motion/react';
 import { db } from '../db';
 import type { Episode, LogEntry, Media } from '../types';
 import { addDays, dayLabel, parseKey, todayKey } from '../lib/dates';
-import { getCategory, useCategories, verb } from '../lib/categories';
+import { getCategory, trackOf, useCategories, verb } from '../lib/categories';
 import { ratingFor } from '../lib/stats';
 import { fmtRating } from '../lib/ratings';
 import { setSettings, useSettings } from '../lib/settings';
@@ -20,7 +20,7 @@ interface Crunch {
   daysActive: number;
   longestStreak: number;
   avgRating?: number;
-  ratingCounts: number[]; // index 0 = 1 star
+  ratingCounts: number[]; // index 0 = half a star (1/10), index 9 = 5 stars (10/10)
   finishedBy: Map<string, number>; // category → titles finished
   byCategory: { id: string; minutes: number; titles: number }[];
   buckets: { key: string; label: string; minutes: number }[];
@@ -87,7 +87,7 @@ function crunch(media: Media[], logs: LogEntry[], episodes: Episode[], range: st
     if (l.kind === 'finish' || l.kind === 'once') finished.add(m.id);
   }
   for (const m of media) {
-    if (getCategory(m.type).track !== 'episodes' || m.status !== 'completed') continue;
+    if (trackOf(m) !== 'episodes' || m.status !== 'completed') continue;
     const last = logs.filter((l) => l.mediaId === m.id && l.kind === 'episode' && l.date).sort((a, b) => b.date!.localeCompare(a.date!))[0];
     if (last && inRange(last.date)) finished.add(m.id);
   }
@@ -103,7 +103,8 @@ function crunch(media: Media[], logs: LogEntry[], episodes: Episode[], range: st
     if (l.rating) ratings.push(l.rating);
     if (l.kind === 'finish' && mediaById.get(l.mediaId)!.rating) ratings.push(mediaById.get(l.mediaId)!.rating!);
   }
-  const ratingCounts = [1, 2, 3, 4, 5].map((n) => ratings.filter((r) => Math.round(r) === n).length);
+  // Ten buckets of half a star (index 0 = ½★ = 1/10, index 9 = 5★ = 10/10).
+  const ratingCounts = Array.from({ length: 10 }, (_, i) => ratings.filter((r) => Math.round(r * 2) === i + 1).length);
 
   // Streaks inside the range.
   const days = [...perDay.keys()].sort();
@@ -400,7 +401,17 @@ export default function Stats() {
   const finishedTotal = [...s.finishedBy.values()].reduce((a, b) => a + b, 0);
   const goals = Object.entries(settings.goals).filter(([, n]) => n > 0);
   const maxCat = Math.max(1, ...s.byCategory.map((c) => c.minutes));
-  const maxRating = Math.max(1, ...s.ratingCounts);
+  // 10 stars: a row per point. 5 stars: a row per star, plus the half-star rows once you've used half stars.
+  const halves = s.ratingCounts.some((n, i) => n > 0 && i % 2 === 0);
+  const ratingRows = s.ratingCounts
+    .map((count, i) => ({ count, steps: i + 1 }))
+    .filter(({ steps }) => settings.ratingScale === 'ten' || halves || steps % 2 === 0)
+    .reverse()
+    .map(({ count, steps }) => ({
+      count,
+      label: settings.ratingScale === 'ten' ? String(steps) : `${Math.floor(steps / 2) || ''}${steps % 2 ? '½' : ''}★`,
+    }));
+  const maxRating = Math.max(1, ...ratingRows.map((r) => r.count));
   const rangeLabel = range === 'all' ? 'all time' : range;
 
   return (
@@ -447,7 +458,10 @@ export default function Stats() {
             <Tile
               label="Average rating"
               value={s.avgRating ? <CountUp value={s.avgRating} format={(n) => fmtRating(n)} /> : '—'}
-              sub={`${s.ratingCounts.reduce((a, b) => a + b, 0)} ratings`}
+              sub={(() => {
+                const n = s.ratingCounts.reduce((a, b) => a + b, 0);
+                return `${n} ${n === 1 ? 'rating' : 'ratings'}`;
+              })()}
             />
           </div>
 
@@ -520,19 +534,19 @@ export default function Stats() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Card title="Your ratings">
               <div className="space-y-1.5">
-                {[5, 4, 3, 2, 1].map((n) => (
-                  <div key={n} className="flex items-center gap-2 text-sm">
-                    <span className="w-8 shrink-0 tabular-nums text-muted">{n}★</span>
+                {ratingRows.map(({ label, count }, i) => (
+                  <div key={label} className="flex items-center gap-2 text-sm">
+                    <span className="w-8 shrink-0 tabular-nums text-muted">{label}</span>
                     <div className="h-3 flex-1 rounded-r bg-surface-2">
                       <motion.div
                         className="h-full rounded-r"
                         style={{ background: 'var(--star)' }}
                         initial={{ width: 0 }}
-                        animate={{ width: `${(s.ratingCounts[n - 1] / maxRating) * 100}%` }}
-                        transition={{ type: 'spring', damping: 30, stiffness: 140, delay: (5 - n) * 0.05 }}
+                        animate={{ width: `${(count / maxRating) * 100}%` }}
+                        transition={{ type: 'spring', damping: 30, stiffness: 140, delay: i * 0.04 }}
                       />
                     </div>
-                    <span className="w-8 shrink-0 text-right tabular-nums">{s.ratingCounts[n - 1]}</span>
+                    <span className="w-8 shrink-0 text-right tabular-nums">{count}</span>
                   </div>
                 ))}
               </div>

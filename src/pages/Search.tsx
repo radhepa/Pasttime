@@ -98,6 +98,8 @@ export default function Search() {
   const searchable = visible.filter((c) => c.search);
   const wanted: Category[] = type === 'all' ? searchable.slice(0, ALL_LIMIT) : [getCategory(type)];
   const wantedKey = wanted.map((c) => c.id).join(',');
+  // TVmaze lists anime as ordinary shows; while you use the Anime category, those land there.
+  const animeHome = visible.some((c) => c.id === 'anime') ? 'anime' : undefined;
   const query = q.trim();
 
   const library = useLiveQuery(async () => {
@@ -141,7 +143,7 @@ export default function Search() {
       setResults(Object.fromEntries(wanted.filter((c) => c.search).map((c) => [c.id, { loading: true }])));
       for (const c of wanted) {
         if (!c.search) continue;
-        searchCategory(c, query)
+        searchCategory(c, query, animeHome)
           .then((items) => !cancelled && setResults((r) => ({ ...r, [c.id]: { items, loading: false } })))
           .catch((e: Error) => !cancelled && setResults((r) => ({ ...r, [c.id]: { error: e.message, loading: false } })));
       }
@@ -150,7 +152,7 @@ export default function Search() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, wantedKey, online, settings.tmdbKey, settings.rawgKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, wantedKey, online, settings.tmdbKey, settings.rawgKey, animeHome]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setType = (t: string) => {
     const next = new URLSearchParams(params);

@@ -6,6 +6,7 @@ import App from './App';
 import { CrashScreen } from './components/CrashScreen';
 import { applyTheme } from './lib/settings';
 import './lib/sync';
+import { convertSingleEpisodeTitles } from './lib/oneShots';
 import './index.css';
 
 // Updates: iPhone home-screen apps are often resumed rather than reloaded, which skips the browser's own
@@ -34,3 +35,6 @@ createRoot(document.getElementById('root')!).render(
     </CrashScreen>
   </StrictMode>,
 );
+
+// Once per device, after the first paint: anime movies and other one-episode titles added earlier become one-tap.
+setTimeout(() => convertSingleEpisodeTitles().catch(() => undefined), 1500);

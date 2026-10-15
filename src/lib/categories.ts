@@ -135,6 +135,9 @@ export function getCategory(id: string): Category {
   return byId.get(id) ?? { ...FALLBACK, id, name: id, plural: id };
 }
 
+/** How a title is tracked: its category's way, except films and one-off specials, which are always one-time. */
+export const trackOf = (m: { type: string; oneShot?: boolean }): Track => (m.oneShot ? 'once' : getCategory(m.type).track);
+
 export function useCategories() {
   return useSyncExternalStore(
     (cb) => {

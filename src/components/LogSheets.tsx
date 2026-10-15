@@ -60,8 +60,22 @@ export function DayPicker({ value, onChange, allowNone }: { value: string | null
   );
 }
 
-/** Shown right after marking an episode/movie watched. One tap on a star saves and closes. */
-export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }: { log?: LogEntry; heading: string; sub?: string; onClose: () => void; pastVerb?: string }) {
+/** Shown right after marking an episode/movie watched. One tap on a star saves and closes. `onUndo`: take the log back. */
+export function RatePrompt({
+  log,
+  heading,
+  sub,
+  onClose,
+  pastVerb = 'Watched',
+  onUndo,
+}: {
+  log?: LogEntry;
+  heading: string;
+  sub?: string;
+  onClose: () => void;
+  pastVerb?: string;
+  onUndo?: () => void;
+}) {
   const [date, setDate] = useState<string | null>(log?.date ?? todayKey());
   const [changingDay, setChangingDay] = useState(false);
   useEffect(() => {
@@ -71,7 +85,8 @@ export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }:
 
   const save = async (rating?: number) => {
     if (!log) return;
-    onClose();
+    if (rating !== undefined) setTimeout(onClose, 260); // let the stars pop first
+    else onClose();
     await db.logs.update(log.id, { rating, date, updatedAt: Date.now() });
   };
 
@@ -81,8 +96,8 @@ export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }:
       <>
       {sub && <p className="-mt-1 mb-4 text-sm text-muted">{sub}</p>}
       <div className="flex flex-col items-center gap-2 py-3">
-        <StarInput value={log.rating} onChange={(r) => save(r)} size="size-11" />
-        <p className="text-xs text-muted">Tap to rate</p>
+        <StarInput value={log.rating} onChange={(r) => save(r)} size={44} />
+        <p className="text-xs text-muted">Tap or slide to rate</p>
       </div>
       <div className="mt-3 border-t border-line pt-3">
         {changingDay ? (
@@ -96,49 +111,71 @@ export function RatePrompt({ log, heading, sub, onClose, pastVerb = 'Watched' }:
       <Button variant="soft" className="mt-4 w-full" onClick={() => save(undefined)}>
         Skip rating
       </Button>
+      {onUndo && (
+        <button
+          className="mt-3 w-full py-1 text-center text-sm text-muted"
+          onClick={() => {
+            onClose();
+            onUndo();
+          }}
+        >
+          Tapped by mistake? <span className="font-semibold text-accent">Undo</span>
+        </button>
+      )}
       </>
       )}
     </Sheet>
   );
 }
 
-/** Log one time you watched / listened to / went to something, with an optional rating. */
-export function OnceSheet({ media, open, onClose }: { media: Media; open: boolean; onClose: () => void }) {
-  const v = verb(getCategory(media.type));
-  const [date, setDate] = useState<string | null>(todayKey());
-  const [rating, setRating] = useState<number>();
-  const [note, setNote] = useState('');
-  useEffect(() => {
-    if (open) {
-      setDate(todayKey());
-      setRating(undefined);
-      setNote('');
-    }
-  }, [open]);
-  const save = async () => {
-    const first = media.status !== 'completed';
-    const log = await addLog({ mediaId: media.id, kind: 'once', date, rating, note: note || undefined });
-    if (first) await touchMedia(media.id, { status: 'completed' });
-    onClose();
-    if (first) celebrate();
-    else haptic('success');
-    loggedToast(`${v.past} ${media.title}`, log, media);
-  };
+/**
+ * One tap: you watched / read / went to it today. Returns the new entry so the caller can ask for a rating
+ * (where the day can still be changed). The first time also marks the title finished.
+ */
+export async function logOnce(media: Media) {
+  const first = media.status !== 'completed';
+  const log = await addLog({ mediaId: media.id, kind: 'once', date: todayKey() });
+  if (first) await touchMedia(media.id, { status: 'completed' });
+  if (first) celebrate();
+  else haptic('success');
+  return log;
+}
+
+/** Takes back a one-tap log (and the "finished" it may have set). */
+export async function undoLog(log: LogEntry, media: Media) {
+  await db.logs.delete(log.id);
+  await touchMedia(media.id, { status: media.status, rating: media.rating });
+}
+
+/** Big stars in a sheet, for rating from a tight spot (an episode row). One tap saves and closes. */
+export function RateSheet({
+  open,
+  heading,
+  sub,
+  value,
+  onRate,
+  onClose,
+}: {
+  open: boolean;
+  heading: string;
+  sub?: string;
+  value?: number;
+  onRate: (v: number | undefined) => void;
+  onClose: () => void;
+}) {
   return (
-    <Sheet open={open} onClose={onClose} title={`${v.past}${v.past === 'Went' ? ' to' : ''} ${media.title}`}>
-      <div className="space-y-5">
-        <Field label="When">
-          <DayPicker value={date} onChange={setDate} allowNone />
-        </Field>
-        <Field label="Your rating">
-          <StarInput value={rating} onChange={setRating} />
-        </Field>
-        <Field label="Note (optional)">
-          <input className="field" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Who you were with, where…" />
-        </Field>
-        <Button className="w-full" onClick={save}>
-          Log it
-        </Button>
+    <Sheet open={open} onClose={onClose} title={heading}>
+      {sub && <p className="-mt-1 mb-4 text-sm text-muted">{sub}</p>}
+      <div className="flex flex-col items-center gap-2 py-3">
+        <StarInput
+          value={value}
+          size={44}
+          onChange={(r) => {
+            onRate(r);
+            setTimeout(onClose, 260);
+          }}
+        />
+        <p className="text-xs text-muted">Tap or slide to rate{value ? ' · tap your rating again to clear it' : ''}</p>
       </div>
     </Sheet>
   );

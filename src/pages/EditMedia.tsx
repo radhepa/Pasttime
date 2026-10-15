@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { db, deleteMedia, uid } from '../db';
+import { db, deleteMedia, setOneShot, uid } from '../db';
 import type { Episode, Media, Status } from '../types';
-import { getCategory, statusLabel, TRACK_INFO, unitPlural, useCategories } from '../lib/categories';
+import { getCategory, statusLabel, TRACK_INFO, trackOf, unitPlural, useCategories } from '../lib/categories';
 import { Button, Cover, Field, Icon } from '../components/ui';
 
 const STATUSES: Status[] = ['planned', 'active', 'completed', 'paused', 'dropped'];
@@ -70,8 +70,14 @@ export default function EditMedia() {
   const set = (patch: Partial<Media>) => setM({ ...m, ...patch });
   const isNew = !id;
   const cat = getCategory(m.type);
-  const manualEpisodes = cat.track === 'episodes' && m.source !== 'tvmaze' && m.source !== 'anilist';
-  const choices = isNew ? visible : visible.filter((c) => c.track === cat.track || c.id === m.type);
+  const track = trackOf(m);
+  const manualEpisodes = track === 'episodes' && m.source !== 'tvmaze' && m.source !== 'anilist';
+  // Moving between categories keeps how it's tracked; a film can also go to an episodes category (Anime) as a single film.
+  const choices = isNew ? visible : visible.filter((c) => c.track === track || c.id === m.type || (track === 'once' && c.track === 'episodes'));
+  const changeCategory = (type: string) => {
+    const to = getCategory(type).track;
+    set({ type, oneShot: to === 'episodes' ? (track === 'once' && !isNew) || m.oneShot || undefined : undefined });
+  };
 
   const save = async () => {
     if (!m.title.trim()) return;
@@ -93,6 +99,8 @@ export default function EditMedia() {
       );
       for (const k of Object.keys(before)) if (!(k in media)) changes[k] = undefined;
       if (Object.keys(changes).length) await db.media.update(media.id, { ...changes, updatedAt: media.updatedAt });
+      // Film <-> series: carry the history across (watching the single episode = watching the film).
+      if (!!media.oneShot !== !!original.current?.oneShot && getCategory(media.type).track === 'episodes') await setOneShot(media.id, !!media.oneShot);
     }
     if (manualEpisodes) {
       // "10, 8, 12" → season 1 has 10 episodes, season 2 has 8… Only adds what's missing.
@@ -128,8 +136,8 @@ export default function EditMedia() {
           <Cover src={m.cover} title={m.title || '?'} type={m.type} className="mx-auto h-48 w-32 rounded-xl shadow ring-1 ring-line" />
         </div>
         <div className="flex-1 space-y-4">
-          <Field label="Category" hint={isNew ? TRACK_INFO[cat.track].hint : 'You can move it to another category that’s tracked the same way.'}>
-            <select className="field" value={m.type} onChange={(e) => set({ type: e.target.value })}>
+          <Field label="Category" hint={isNew ? TRACK_INFO[track].hint : 'You can move it to another category that’s tracked the same way.'}>
+            <select className="field" value={m.type} onChange={(e) => changeCategory(e.target.value)}>
               {!choices.some((c) => c.id === m.type) && <option value={m.type}>{cat.emoji} {cat.name}</option>}
               {choices.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -138,6 +146,30 @@ export default function EditMedia() {
               ))}
             </select>
           </Field>
+          {cat.track === 'episodes' && (
+            <Field
+              label="What is it"
+              hint={m.oneShot ? 'A film or one-off special: one tap marks it watched.' : 'Seasons and episodes, each one checked off as you go.'}
+            >
+              <span className="flex gap-1 rounded-xl bg-surface-2 p-1">
+                {(
+                  [
+                    [false, 'Series'],
+                    [true, 'Film or special'],
+                  ] as const
+                ).map(([one, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => set({ oneShot: one || undefined })}
+                    className={`flex-1 rounded-lg py-1.5 text-sm font-semibold transition ${!!m.oneShot === one ? 'bg-surface shadow-sm' : 'text-muted'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
+            </Field>
+          )}
           <Field label="Title">
             <input className="field" value={m.title} onChange={(e) => set({ title: e.target.value })} autoFocus={isNew} />
           </Field>
@@ -161,7 +193,7 @@ export default function EditMedia() {
               </select>
             </Field>
           </div>
-          {cat.track === 'progress' && (
+          {track === 'progress' && (
             <Field label={`Total ${unitPlural(cat)}`} hint="Leave empty if it's ongoing or you don't know.">
               <input
                 type="number"
@@ -177,7 +209,7 @@ export default function EditMedia() {
               <input className="field" value={seasonPlan} onChange={(e) => setSeasonPlan(e.target.value)} placeholder="10, 8, 12" />
             </Field>
           )}
-          {cat.track === 'once' && (
+          {track === 'once' && (
             <Field label="Length (minutes)" hint="Used for time-spent stats.">
               <input
                 type="number"

@@ -129,7 +129,7 @@ async function importGoodreads(rows: Record<string, string>[]): Promise<ImportRe
 async function importLetterboxd(rows: Record<string, string>[], file: 'diary' | 'watched' | 'ratings' | 'watchlist'): Promise<ImportResult> {
   const stats: ImportResult = { added: 0, updated: 0, entries: 0, kind: `Letterboxd ${file}` };
   // Letterboxd uses half stars; Pastime uses whole stars, so 3.5 → 4.
-  const stars = (s?: string) => (Number(s) ? Math.max(1, Math.min(5, Math.round(Number(s)))) : undefined);
+  const stars = (s?: string) => (Number(s) ? Math.max(0.5, Math.min(5, Math.round(Number(s) * 2) / 2)) : undefined);
   for (const r of rows) {
     if (!r.Name) continue;
     const year = Number(r.Year) || undefined;

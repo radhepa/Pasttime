@@ -1,7 +1,7 @@
 import type { Episode, LogEntry, Media } from '../types';
 import { formatMinutes, todayKey } from './dates';
 import { onceRating, showRating } from './ratings';
-import { getCategory, unitPlural, verb } from './categories';
+import { getCategory, trackOf, unitPlural, verb } from './categories';
 
 export interface MediaStats {
   rating?: number;
@@ -21,7 +21,7 @@ export function currentPage(logs: LogEntry[]) {
 
 /** The rating shown for a title, whatever its category. */
 export function ratingFor(media: Media, logs: LogEntry[], episodes: Episode[], showMode: 'seasons' | 'episodes') {
-  const track = getCategory(media.type).track;
+  const track = trackOf(media);
   if (track === 'episodes') return showRating(episodes, logs, showMode).overall;
   if (track === 'once') return onceRating(logs) ?? media.rating;
   return media.rating;
@@ -32,7 +32,7 @@ export function statsFor(media: Media, logs: LogEntry[], episodes: Episode[], sh
   const lastActivity = Math.max(media.updatedAt, ...logs.map((l) => l.at));
   const rating = ratingFor(media, logs, episodes, showMode);
   const minutes = logs.reduce((s, l) => s + (l.kind === 'session' || l.kind === 'progress' ? (l.minutes ?? 0) : 0), 0);
-  switch (c.track) {
+  switch (trackOf(media)) {
     case 'episodes': {
       const today = todayKey();
       const aired = episodes.filter((e) => !e.airdate || e.airdate <= today);

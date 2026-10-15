@@ -5,13 +5,14 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { db, logEpisode } from '../db';
 import type { Episode, LogEntry, Media } from '../types';
 import { addDays, dateKey, dayLabel, episodeCode, formatMinutes, parseKey, todayKey, weekOf } from '../lib/dates';
-import { getCategory, unitPlural, verb } from '../lib/categories';
+import { getCategory, trackOf, unitPlural, verb } from '../lib/categories';
+import { toast } from '../lib/toast';
 import { currentPage, statsFor } from '../lib/stats';
 import { useSettings } from '../lib/settings';
 import { catColor, Cover, Empty, Icon, StarDisplay, TypeBadge } from '../components/ui';
 import { LogEditor } from '../components/LogEditor';
 import { haptic } from '../lib/feedback';
-import { OnceSheet, ProgressSheet, RatePrompt, SessionSheet } from '../components/LogSheets';
+import { logOnce, ProgressSheet, RatePrompt, SessionSheet, undoLog } from '../components/LogSheets';
 
 interface DayGroup {
   media: Media;
@@ -202,7 +203,7 @@ function ContinueRow() {
   // The item whose sheet is showing (kept after closing so the sheet can slide away).
   const [open, setOpen] = useState<ContinueItem>();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [prompt, setPrompt] = useState<{ log: LogEntry; ep: Episode; media: Media }>();
+  const [prompt, setPrompt] = useState<{ log: LogEntry; ep?: Episode; media: Media }>();
   const [done, setDone] = useState<string>();
   const settings = useSettings();
 
@@ -210,18 +211,26 @@ function ContinueRow() {
   const ratePrompt = (
     <RatePrompt
       log={prompt?.log}
-      heading={prompt ? `How was ${episodeCode(prompt.ep.season, prompt.ep.number)}?` : ''}
-      sub={prompt ? `${prompt.media.title} · ${prompt.ep.title ?? ''}` : undefined}
+      heading={prompt ? `How was ${prompt.ep ? episodeCode(prompt.ep.season, prompt.ep.number) : prompt.media.title}?` : ''}
+      sub={prompt?.ep ? `${prompt.media.title}${prompt.ep.title ? ` · ${prompt.ep.title}` : ''}` : undefined}
+      pastVerb={prompt ? verb(getCategory(prompt.media.type)).past : undefined}
       onClose={() => setPrompt(undefined)}
+      onUndo={prompt && !prompt.ep ? () => undoLog(prompt.log, prompt.media) : undefined}
     />
   );
   if (!items?.length) return ratePrompt;
 
   const quick = async (it: ContinueItem) => {
-    const c = getCategory(it.media.type);
-    if (c.track === 'episodes' && done === it.media.id) return; // just logged: ignore a double tap
+    const track = trackOf(it.media);
+    if ((track === 'episodes' || track === 'once') && done === it.media.id) return; // just logged: ignore a double tap
     haptic();
-    if (c.track === 'episodes') {
+    if (track === 'once') {
+      setDone(it.media.id);
+      setTimeout(() => setDone((d) => (d === it.media.id ? undefined : d)), 1100);
+      const log = await logOnce(it.media);
+      if (settings.promptRating) setPrompt({ log, media: it.media });
+      else toast(`${verb(getCategory(it.media.type)).past} ${it.media.title}`, { label: 'Undo', run: () => undoLog(log, it.media) });
+    } else if (track === 'episodes') {
       if (!it.next) return;
       setDone(it.media.id);
       setTimeout(() => setDone((d) => (d === it.media.id ? undefined : d)), 1100);
@@ -234,14 +243,15 @@ function ContinueRow() {
   };
   const closeSheet = () => setSheetOpen(false);
 
-  const track = open ? getCategory(open.media.type).track : undefined;
+  const track = open ? trackOf(open.media) : undefined;
   return (
     <section className="mb-6">
       <h2 className="mb-2 eyebrow">Continue</h2>
       <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto scroll-px-4 px-4 pb-1">
         {items.map((it, i) => {
           const c = getCategory(it.media.type);
-          const disabled = c.track === 'episodes' && !it.next;
+          const t = trackOf(it.media);
+          const disabled = t === 'episodes' && !it.next;
           const justDone = done === it.media.id;
           return (
             <motion.div
@@ -273,8 +283,8 @@ function ContinueRow() {
                   </span>
                 ) : (
                   <>
-                    <Icon name={c.track === 'episodes' ? 'check' : 'plus'} className="size-3.5" strokeWidth={2.5} />
-                    {c.track === 'episodes' ? (disabled ? 'Caught up' : 'Watched') : 'Log'}
+                    <Icon name={t === 'episodes' || t === 'once' ? 'check' : 'plus'} className="size-3.5" strokeWidth={2.5} />
+                    {t === 'episodes' ? (disabled ? 'Caught up' : 'Watched') : t === 'once' ? verb(c).past : 'Log'}
                   </>
                 )}
               </button>
@@ -286,7 +296,6 @@ function ContinueRow() {
         <>
           <ProgressSheet media={open.media} open={sheetOpen && track === 'progress'} currentPage={open.page} onClose={closeSheet} onReachedEnd={() => undefined} />
           <SessionSheet media={open.media} open={sheetOpen && track === 'sessions'} onClose={closeSheet} />
-          <OnceSheet media={open.media} open={sheetOpen && track === 'once'} onClose={closeSheet} />
         </>
       )}
       {ratePrompt}

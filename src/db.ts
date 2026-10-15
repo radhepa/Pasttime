@@ -83,13 +83,15 @@ async function addNew(r: SearchResult): Promise<string> {
     totalPages: r.totalPages,
     platforms: r.platforms,
     airStatus: r.airStatus,
+    runtime: r.runtime,
+    oneShot: r.oneShot || undefined,
     status: 'planned',
     addedAt: now,
     updatedAt: now,
   };
   await db.media.add(media);
-  if (media.source === 'tvmaze') await syncEpisodes(media).catch(() => undefined);
-  if (r.episodeCount) await fillEpisodes(media.id, r.episodeCount);
+  if (media.source === 'tvmaze' && !media.oneShot) await syncEpisodes(media).catch(() => undefined);
+  if (r.episodeCount && !media.oneShot) await fillEpisodes(media.id, r.episodeCount);
   if (media.source === 'openlibrary' && !media.overview) {
     // Search results don't carry the blurb; fetch it in the background.
     fetchBookDescription(r.sourceId)
@@ -114,6 +116,7 @@ async function fillEpisodes(mediaId: string, count: number) {
  * so your logs stay attached. A show that has now ended and is fully watched moves to "completed".
  */
 export async function syncEpisodes(media: Media) {
+  if (media.oneShot) return 0;
   const checked = { episodesCheckedAt: Date.now() };
   if (media.source === 'anilist' && media.sourceId) {
     const { count, status } = await fetchAnilistEpisodeCount(media.sourceId);
@@ -135,6 +138,37 @@ export async function syncEpisodes(media: Media) {
   await db.episodes.bulkPut(rows);
   await maybeCompleteShow(media.id);
   return rows.length - existing.length;
+}
+
+/**
+ * Switches a title between "has episodes" and "one-time, like a movie" (oneShot), carrying your history over:
+ * watching its single episode becomes watching the film, and back.
+ */
+export async function setOneShot(id: string, on: boolean) {
+  const media = await db.media.get(id);
+  if (!media) return;
+  const now = Date.now();
+  const logs = await db.logs.where('mediaId').equals(id).toArray();
+  if (on) {
+    const moved = logs
+      .filter((l) => l.kind === 'episode')
+      .map(({ episodeId: _e, season: _s, number: _n, ...l }) => ({ ...l, kind: 'once' as const, updatedAt: now }));
+    if (moved.length) await db.logs.bulkPut(moved);
+    await db.media.update(id, { oneShot: true, ...(moved.length ? { status: 'completed' as const } : {}), updatedAt: now });
+    return;
+  }
+  await db.media.update(id, { oneShot: undefined, updatedAt: now });
+  let eps = await db.episodes.where('mediaId').equals(id).toArray();
+  if (!eps.length) {
+    await syncEpisodes({ ...media, oneShot: undefined }).catch(() => undefined);
+    eps = await db.episodes.where('mediaId').equals(id).toArray();
+  }
+  const first = eps.sort((a, b) => (a.season || 99) - (b.season || 99) || a.number - b.number)[0];
+  if (!first) return;
+  const moved = logs
+    .filter((l) => l.kind === 'once')
+    .map((l) => ({ ...l, kind: 'episode' as const, episodeId: first.id, season: first.season, number: first.number, updatedAt: now }));
+  if (moved.length) await db.logs.bulkPut(moved);
 }
 
 export async function deleteMedia(id: string) {

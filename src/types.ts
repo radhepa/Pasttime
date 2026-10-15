@@ -24,6 +24,11 @@ export interface Media {
   episodesCheckedAt?: number;
   /** Movies: length in minutes (used for watch-time stats). */
   runtime?: number;
+  /**
+   * A film or one-off special in a category that usually has episodes (an anime movie, a TV movie):
+   * it's logged like a movie, with one tap, instead of through an episode list.
+   */
+  oneShot?: boolean;
   /** Games */
   platforms?: string[];
   /** Books & games: the overall rating you gave it. Shows and movies compute theirs from logs. */
@@ -102,5 +107,8 @@ export interface SearchResult {
   airStatus?: string;
   /** Sources that only know how many episodes there are (AniList). */
   episodeCount?: number;
+  /** A movie or one-off special found in an episodes category (see Media.oneShot). */
+  oneShot?: boolean;
+  runtime?: number;
   subtitle?: string;
 }

@@ -8,7 +8,8 @@ import { setLook, setSettings, useSettings, type Palette } from '../lib/settings
 import { moveCategory, saveCategory, TRACK_INFO, unitPlural, useCategories, type Category } from '../lib/categories';
 import { fillMissingDetails, importCsv, importLetterboxdWatchlist } from '../lib/importers';
 import { toast } from '../lib/toast';
-import { Button, Field, Icon } from '../components/ui';
+import { Button, Field, Icon, StarInput } from '../components/ui';
+import { fmtRating } from '../lib/ratings';
 import { CategoryEditor } from '../components/CategoryEditor';
 import { SyncCard } from '../components/SyncCard';
 
@@ -39,7 +40,7 @@ const Switch = ({ on }: { on: boolean }) => (
   </span>
 );
 
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
   const pillId = useId();
   return (
     <div className="flex gap-1 rounded-xl bg-surface-2 p-1">
@@ -61,7 +62,7 @@ const THEMES: { id: Palette; name: string; mood: string; light: string[]; dark: 
   { id: 'lilac', name: 'Lilac', mood: 'Hushed violet', light: ['#efedf2', '#faf9fc', '#241f2e', '#6b5a8e', '#d6cde4'], dark: ['#17141d', '#201c28', '#ece8f2', '#bca9e3', '#352c4d'] },
 ];
 
-function ThemePicker() {
+export function ThemePicker() {
   const s = useSettings();
   const dark = s.theme === 'dark' || (s.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   return (
@@ -189,6 +190,7 @@ function Categories() {
 }
 
 export default function Settings() {
+  const [sample, setSample] = useState<number>(4.5);
   const s = useSettings();
   const backupFile = useRef<HTMLInputElement>(null);
   const csvFile = useRef<HTMLInputElement>(null);
@@ -271,16 +273,43 @@ export default function Settings() {
           ]}
         />
         <ThemePicker />
+        <p className="text-sm">
+          <Link to="/welcome" className="font-semibold text-accent">
+            Run the welcome setup again
+          </Link>{' '}
+          <span className="text-muted">to pick categories, add things you've finished, and choose a theme.</span>
+        </p>
       </Card>
 
       <Categories />
 
-      <Card title="Ratings">
+      <Card title="Ratings" id="ratings">
+        <div>
+          <p className="mb-2 text-sm font-semibold">Rating scale</p>
+          <Segmented
+            value={s.ratingScale}
+            onChange={(ratingScale) => setSettings({ ratingScale })}
+            options={[
+              ['five', '5 stars, with halves'],
+              ['ten', '10 stars'],
+            ]}
+          />
+          <div className="mt-3 flex items-center gap-3 rounded-2xl bg-surface-2/60 px-3 py-2.5">
+            <StarInput value={sample} onChange={(v) => setSample(v ?? 4.5)} size={26} />
+            <span className="text-sm font-semibold tabular-nums">{fmtRating(sample, s.ratingScale)}</span>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            {s.ratingScale === 'five'
+              ? 'Tap the left half of a star for a half star, or slide along the stars. Try it above.'
+              : 'Each star is one point out of 10. Try it above.'}{' '}
+            Switching scales keeps every rating: 4½ stars is 9 out of 10.
+          </p>
+        </div>
         <Toggle
           on={s.promptRating}
           onChange={(v) => setSettings({ promptRating: v })}
-          label="Ask for a rating after each episode"
-          hint="Pops up the stars as soon as you tick an episode off."
+          label="Ask for a rating right after you watch something"
+          hint="The stars pop up as soon as you tick off an episode or mark a movie watched."
         />
         <div>
           <p className="mb-2 text-sm font-semibold">Overall rating for series</p>

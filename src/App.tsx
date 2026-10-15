@@ -1,5 +1,5 @@
 import { NavLink, Route, Routes, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MotionConfig, motion } from 'motion/react';
 import { Icon } from './components/ui';
 import { TimerBar, Toaster } from './components/Overlays';
@@ -13,6 +13,9 @@ import MediaDetail from './pages/MediaDetail';
 import EditMedia from './pages/EditMedia';
 import Stats from './pages/Stats';
 import Settings from './pages/Settings';
+import Onboarding from './pages/Onboarding';
+import { db } from './db';
+import { isOnboarded, setOnboarded } from './lib/onboarding';
 
 const TABS = [
   { to: '/', icon: 'timeline', label: 'Timeline' },
@@ -40,6 +43,18 @@ export default function App() {
   const main = useRef<HTMLElement>(null);
   const timer = useTimer();
   useCategories(); // re-render everything when you rename/recolour/hide a category
+  // First run on this device with an empty library: the welcome setup. Libraries from before setup existed skip it.
+  const [welcome, setWelcome] = useState<boolean | undefined>(() => (isOnboarded() ? false : undefined));
+  useEffect(() => {
+    if (welcome !== undefined) return;
+    db.media
+      .count()
+      .then((n) => {
+        if (n) setOnboarded();
+        setWelcome(!n);
+      })
+      .catch(() => setWelcome(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // New screens open at the top; going Back returns to where you were scrolled.
   const navType = useNavigationType();
   const scrollKey = pathname + location.search;
@@ -77,6 +92,21 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate]);
+
+  if (welcome === undefined) return null;
+  if (welcome || pathname === '/welcome')
+    return (
+      <MotionConfig reducedMotion="user">
+        <Onboarding
+          onDone={() => {
+            setOnboarded();
+            setWelcome(false);
+            navigate('/library', { replace: true });
+          }}
+        />
+        <Toaster />
+      </MotionConfig>
+    );
 
   return (
     <MotionConfig reducedMotion="user">

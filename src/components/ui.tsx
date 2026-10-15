@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useDragControls, type PanInfo } from 'motion/react';
 import type { MediaType } from '../types';
 import { getCategory } from '../lib/categories';
 import { haptic } from '../lib/feedback';
+import { useSettings } from '../lib/settings';
+import { fmtRating, outOf, ratingWords, scaled, STEP, type RatingScale } from '../lib/ratings';
 
 /* ---------- Icons ---------- */
 
@@ -57,65 +59,170 @@ export function Icon({ name, className = 'size-5', strokeWidth = 1.9, draw }: { 
 
 const STAR = 'M12 2.8l2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z';
 
-/** Display stars, with partial fill for averages like 4.3. */
-export function StarDisplay({ value, size = 'size-4' }: { value?: number; size?: string }) {
+/** One star, filled from the left by `fill` (0–1): half stars and averages like 4.3 show as part-filled. */
+function StarShape({ fill, className, style }: { fill: number; className?: string; style?: CSSProperties }) {
   return (
-    <span className="inline-flex items-center gap-px" aria-label={value ? `${value.toFixed(1)} out of 5` : 'Not rated'}>
-      {[0, 1, 2, 3, 4].map((i) => {
-        const fill = Math.max(0, Math.min(1, (value ?? 0) - i));
+    <span className={`relative block ${className ?? ''}`} style={style}>
+      <svg viewBox="0 0 24 24" className="block size-full text-line" fill="currentColor" aria-hidden>
+        <path d={STAR} />
+      </svg>
+      {fill > 0 && (
+        <span className="absolute inset-0 overflow-hidden" style={{ width: `${fill * 100}%` }}>
+          <svg viewBox="0 0 24 24" className="block h-full text-star" style={{ width: `${100 / fill}%` }} fill="currentColor" aria-hidden>
+            <path d={STAR} />
+          </svg>
+        </span>
+      )}
+    </span>
+  );
+}
+
+const starFill = (value: number, i: number, scale: RatingScale) => Math.max(0, Math.min(1, scaled(value, scale) - i));
+
+/**
+ * Shows a rating. On 5 stars that's the stars themselves; on the 10-star scale a row of ten only fits where
+ * there's room (`wide`), so small spots show one star and the number instead ("★ 9").
+ */
+export function StarDisplay({ value, size = 'size-4', wide }: { value?: number; size?: string; wide?: boolean }) {
+  const { ratingScale: scale } = useSettings();
+  if (scale === 'ten' && !wide) {
+    if (!value) return null;
+    return (
+      <span className="inline-flex items-center gap-0.5 text-xs font-bold tabular-nums" aria-label={ratingWords(value, scale)}>
+        <StarShape fill={1} className={size} />
+        {fmtRating(value, scale)}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-px" aria-label={ratingWords(value, scale)}>
+      {Array.from({ length: outOf(scale) }, (_, i) => (
+        <StarShape key={i} fill={starFill(value ?? 0, i, scale)} className={size} />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Rate by tapping or sliding a finger along the stars. On 5 stars the left half of a star gives a half star;
+ * on 10 stars each star is one point. Tap your current rating again to clear it. Arrow keys work too.
+ * `size` is the star size in pixels on the 5-star scale; ten stars shrink to fit the same row.
+ */
+export function StarInput({ value, onChange, size = 32 }: { value?: number; onChange: (v: number | undefined) => void; size?: number }) {
+  const { ratingScale: scale } = useSettings();
+  const ten = scale === 'ten';
+  const count = outOf(scale);
+  const px = ten ? Math.round(size * 0.74) : size;
+  const [hover, setHover] = useState<number>();
+  // Bumped on every rating so the filled stars replay their little pop, left to right.
+  const [bump, setBump] = useState(0);
+  const row = useRef<HTMLSpanElement>(null);
+  const press = useRef<{ x: number; slid: boolean } | null>(null);
+  // What you just picked stays lit until the saved value comes back (a sheet may close a moment later).
+  const [picked, setPicked] = useState<{ v?: number } | null>(null);
+  useEffect(() => setPicked(null), [value]);
+  const shown = hover ?? (picked ? picked.v : value) ?? 0;
+
+  /** The rating under a finger or pointer at clientX. */
+  const valueAt = (x: number) => {
+    const stars = [...(row.current?.children ?? [])] as HTMLElement[];
+    for (const [i, el] of stars.entries()) {
+      const r = el.getBoundingClientRect();
+      if (x <= r.right || i === stars.length - 1) return ten ? (i + 1) * STEP : i + (x < r.left + r.width / 2 ? STEP : 1);
+    }
+    return STEP;
+  };
+  const commit = (v: number | undefined) => {
+    setBump((b) => b + 1);
+    setPicked({ v });
+    onChange(v);
+  };
+
+  return (
+    <span
+      ref={row}
+      role="slider"
+      tabIndex={0}
+      aria-label="Your rating"
+      aria-valuemin={0}
+      aria-valuemax={count}
+      aria-valuenow={value ? scaled(value, scale) : 0}
+      aria-valuetext={ratingWords(value, scale)}
+      className={`inline-flex max-w-full touch-none items-center rounded-lg outline-none select-none focus-visible:ring-2 focus-visible:ring-accent ${ten ? 'gap-0.5' : 'gap-1'}`}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        if (e.button !== 0) return;
+        row.current?.setPointerCapture(e.pointerId);
+        press.current = { x: e.clientX, slid: false };
+        haptic();
+        setHover(valueAt(e.clientX));
+      }}
+      onPointerMove={(e) => {
+        if (press.current) {
+          if (Math.abs(e.clientX - press.current.x) > 6) press.current.slid = true;
+          setHover(valueAt(e.clientX));
+        } else if (e.pointerType === 'mouse') setHover(valueAt(e.clientX));
+      }}
+      onPointerUp={(e) => {
+        const p = press.current;
+        press.current = null;
+        if (!p) return;
+        const v = valueAt(e.clientX);
+        setHover(undefined);
+        // A tap on the rating you already gave clears it; sliding always sets.
+        commit(!p.slid && v === value ? undefined : v);
+      }}
+      onPointerCancel={() => {
+        press.current = null;
+        setHover(undefined);
+      }}
+      onPointerLeave={() => !press.current && setHover(undefined)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        const now = value ?? 0;
+        let next: number | undefined | null = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = Math.min(5, now + STEP);
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = now - STEP >= STEP ? now - STEP : undefined;
+        if (e.key === 'Home') next = STEP;
+        if (e.key === 'End') next = 5;
+        if (e.key === 'Delete' || e.key === 'Backspace' || e.key === '0') next = undefined;
+        if (next === null) return;
+        e.preventDefault();
+        commit(next);
+      }}
+    >
+      {Array.from({ length: count }, (_, i) => {
+        const fill = starFill(shown, i, scale);
         return (
-          <span key={i} className={`relative ${size}`}>
-            <svg viewBox="0 0 24 24" className={`absolute inset-0 ${size} text-line`} fill="currentColor">
-              <path d={STAR} />
-            </svg>
-            <span className="absolute inset-0 overflow-hidden" style={{ width: `${fill * 100}%` }}>
-              <svg viewBox="0 0 24 24" className={`${size} text-star`} fill="currentColor">
-                <path d={STAR} />
-              </svg>
-            </span>
-          </span>
+          <StarShape
+            key={fill > 0 ? `on-${bump}-${i}` : `off-${i}`}
+            fill={fill}
+            className={`shrink transition-transform duration-150 ${bump && fill > 0 && hover === undefined ? 'animate-pop' : ''} ${hover !== undefined && fill > 0 ? 'scale-110' : ''}`}
+            style={{ width: px, height: px, minWidth: 0, flexBasis: px, animationDelay: `${i * (ten ? 22 : 35)}ms` }}
+          />
         );
       })}
     </span>
   );
 }
 
-/** Tap a star to rate 1–5; tap the current rating again to clear it. */
-export function StarInput({ value, onChange, size = 'size-8', compact }: { value?: number; onChange: (v: number | undefined) => void; size?: string; compact?: boolean }) {
-  const [hover, setHover] = useState<number>();
-  // Bumped on every tap so the filled stars replay their little pop, left to right.
-  const [bump, setBump] = useState(0);
-  const shown = hover ?? value ?? 0;
+/** A small "★ 4.5" / "Rate" button for tight rows (episodes): opens the full stars in a sheet. */
+export function RatingChip({ value, onClick, label = 'Rate' }: { value?: number; onClick: () => void; label?: string }) {
+  const { ratingScale: scale } = useSettings();
   return (
-    <span className={`inline-flex items-center ${compact ? '' : 'gap-1'}`} onMouseLeave={() => setHover(undefined)}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
-          aria-label={`${n} star${n > 1 ? 's' : ''}`}
-          aria-pressed={value != null && n <= value}
-          onMouseEnter={() => setHover(n)}
-          onClick={(e) => {
-            e.stopPropagation();
-            haptic();
-            setHover(undefined);
-            setBump((b) => b + 1);
-            onChange(value === n ? undefined : n);
-          }}
-          className={`transition-transform duration-150 active:scale-85 ${compact ? 'p-1' : ''}`}
-        >
-          <svg
-            key={n <= shown ? `on-${bump}` : 'off'}
-            viewBox="0 0 24 24"
-            className={`${size} transition-colors duration-150 ${n <= shown ? 'text-star' : 'text-line'} ${bump && n <= shown ? 'animate-pop' : ''}`}
-            style={{ animationDelay: `${(n - 1) * 35}ms` }}
-            fill="currentColor"
-          >
-            <path d={STAR} />
-          </svg>
-        </button>
-      ))}
-    </span>
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        haptic();
+        onClick();
+      }}
+      aria-label={value ? `Your rating: ${ratingWords(value, scale)}. Change it` : label}
+      className={`flex h-9 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-bold tabular-nums transition active:scale-90 ${value ? 'bg-soft text-ink' : 'text-muted'}`}
+    >
+      <StarShape fill={value ? 1 : 0} className="size-4" />
+      {value ? fmtRating(value, scale) : label}
+    </button>
   );
 }
 
